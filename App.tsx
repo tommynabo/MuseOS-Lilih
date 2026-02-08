@@ -22,17 +22,52 @@ const App: React.FC = () => {
     // Check active session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      setLoading(false);
+      if (session?.user) {
+        fetchProfile(session.user.id);
+      } else {
+        setLoading(false);
+      }
     });
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      if (session?.user) {
+        fetchProfile(session.user.id);
+      }
     });
 
     return () => subscription.unsubscribe();
   }, []);
+
+  const fetchProfile = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
+
+      if (data) {
+        // Map snake_case to camelCase
+        setCurrentProfile({
+          id: 'psychologist', // generic ID for frontend logic
+          name: data.role || 'Usuario', // mapping role to name for now or add name field
+          role: data.role || 'User',
+          avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=200',
+          tone: data.tone || 'Empático',
+          nicheKeywords: data.niche_keywords || [],
+          targetCreators: [], // This is effectively replaced by the creators table, but keeping for type compat
+          customInstructions: data.custom_instructions || '',
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching profile:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -49,8 +84,25 @@ const App: React.FC = () => {
     setSelectedIdea(null);
   };
 
-  const handleProfileUpdate = (updated: ClientProfile) => {
+  const handleProfileUpdate = async (updated: ClientProfile) => {
+    // Optimistic update
     setCurrentProfile(updated);
+
+    if (session?.user) {
+      const { error } = await supabase.from('profiles').upsert({
+        user_id: session.user.id,
+        tone: updated.tone,
+        niche_keywords: updated.nicheKeywords,
+        custom_instructions: updated.customInstructions,
+        role: updated.role,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'user_id' });
+
+      if (error) {
+        console.error("Error saving profile:", error);
+        alert("Error al guardar la configuración.");
+      }
+    }
   };
 
   if (loading) {
