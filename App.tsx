@@ -89,18 +89,50 @@ const App: React.FC = () => {
     setCurrentProfile(updated);
 
     if (session?.user) {
-      const { error } = await supabase.from('profiles').upsert({
-        user_id: session.user.id,
-        tone: updated.tone,
-        niche_keywords: updated.nicheKeywords,
-        custom_instructions: updated.customInstructions,
-        role: updated.role,
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'user_id' });
+      try {
+        // First check if profile exists
+        const { data: existing, error: checkError } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('user_id', session.user.id)
+          .single();
 
-      if (error) {
-        console.error("Error saving profile:", error);
-        alert("Error al guardar la configuración.");
+        let error;
+
+        if (existing) {
+          // UPDATE
+          const { error: updateError } = await supabase
+            .from('profiles')
+            .update({
+              tone: updated.tone,
+              niche_keywords: updated.nicheKeywords,
+              custom_instructions: updated.customInstructions,
+              role: updated.role,
+              updated_at: new Date().toISOString()
+            })
+            .eq('user_id', session.user.id);
+          error = updateError;
+        } else {
+          // INSERT (first time)
+          const { error: insertError } = await supabase
+            .from('profiles')
+            .insert({
+              user_id: session.user.id,
+              tone: updated.tone,
+              niche_keywords: updated.nicheKeywords,
+              custom_instructions: updated.customInstructions,
+              role: updated.role
+            });
+          error = insertError;
+        }
+
+        if (error) {
+          console.error("Error saving profile:", error);
+          alert(`Error al guardar: ${error.message || JSON.stringify(error)}`);
+        }
+      } catch (err: any) {
+        console.error("Unexpected error:", err);
+        alert(`Error inesperado: ${err.message}`);
       }
     }
   };
