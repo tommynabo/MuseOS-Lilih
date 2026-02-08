@@ -118,7 +118,7 @@ const App: React.FC = () => {
           const { error: insertError } = await supabase
             .from('profiles')
             .insert({
-              id: uuidv4(),
+              id: session.user.id, // Use user_id as ID to satisfy FK constraint
               user_id: session.user.id,
               tone: updated.tone,
               niche_keywords: updated.nicheKeywords,
