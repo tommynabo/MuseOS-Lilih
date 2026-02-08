@@ -354,7 +354,7 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
                 original_author: post.author?.name || 'Unknown',
                 generated_content: rewritten,
                 type: source === 'keywords' ? 'research' : 'parasite',
-                status: 'drafted',
+                status: 'idea',
                 meta: {
                     outline,
                     engagement: {

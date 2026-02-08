@@ -105,6 +105,10 @@ export const deleteCreator = async (id: number) => {
 
 export const fetchPosts = async () => {
   const headers = await getHeaders();
-  const response = await fetch(`${API_URL}/posts`, { headers });
+  // Add timestamp to prevent caching (fix 304 issues)
+  const response = await fetch(`${API_URL}/posts?t=${Date.now()}`, {
+    headers,
+    cache: 'no-store'
+  });
   return response.json();
 };
