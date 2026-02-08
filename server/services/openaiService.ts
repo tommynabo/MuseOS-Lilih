@@ -15,11 +15,19 @@ export const evaluatePostEngagement = async (posts: any[]): Promise<any[]> => {
 
     const postsData = posts.map((p, idx) => ({
         index: idx,
-        text: p.text?.substring(0, 200) || '',
-        likes: p.likesCount || 0,
-        comments: p.commentsCount || 0,
-        shares: p.sharesCount || 0
+        // Robust text extraction
+        text: (p.text || p.postText || p.content || p.description || '').substring(0, 500),
+        // Robust metrics extraction
+        likes: p.likesCount || p.likesNumber || p.likes || p.reactionCount || 0,
+        comments: p.commentsCount || p.commentsNumber || p.comments || 0,
+        shares: p.sharesCount || p.sharesNumber || p.shares || 0
     }));
+
+    // DEBUG LOG
+    if (posts.length > 0) {
+        console.log("OpenAI Service - First Post Input Keys:", Object.keys(posts[0]));
+        console.log("OpenAI Service - Mapped Data Sample:", postsData[0]);
+    }
 
     const prompt = `
     Analiza estos posts de LinkedIn y determina cuáles tienen ALTO ENGAGEMENT.
@@ -49,12 +57,24 @@ export const evaluatePostEngagement = async (posts: any[]): Promise<any[]> => {
         });
 
         const result = JSON.parse(response.choices[0].message.content || '{"high_engagement_indices": []}');
-        const indices = result.high_engagement_indices || [];
+        let indices = result.high_engagement_indices || [];
+
+        // FALLBACK: If AI finds no high-engagement posts, strictly select top 5 by metrics
+        if (indices.length === 0) {
+            console.log("AI selected 0 posts. Using fallback sorting.");
+            return posts
+                .sort((a, b) => {
+                    const scoreA = (a.likesCount || 0) + (a.commentsCount || 0) * 2;
+                    const scoreB = (b.likesCount || 0) + (b.commentsCount || 0) * 2;
+                    return scoreB - scoreA;
+                })
+                .slice(0, 5);
+        }
 
         return indices.map((i: number) => posts[i]).filter(Boolean).slice(0, 5);
     } catch (error) {
         console.error("Engagement evaluation error:", error);
-        // Fallback: return top 5 by simple metric
+        // Fallback on error
         return posts
             .sort((a, b) => ((b.likesCount || 0) + (b.commentsCount || 0)) - ((a.likesCount || 0) + (a.commentsCount || 0)))
             .slice(0, 5);
