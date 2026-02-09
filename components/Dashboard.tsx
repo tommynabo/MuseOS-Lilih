@@ -10,7 +10,7 @@ interface DashboardProps {
     onRefresh?: () => void;
 }
 
-import { runGenerateWorkflow } from '../services/geminiService';
+import { runGenerateWorkflow, updatePostStatus } from '../services/geminiService';
 
 // ... (existing imports, but keep them if not replacing top of file)
 
@@ -25,17 +25,58 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
     const [schedSource, setSchedSource] = useState<'keywords' | 'creators'>('creators');
     const [schedActive, setSchedActive] = useState(true);
 
+    // Drag and drop state
+    const [draggedItem, setDraggedItem] = useState<{ item: ContentPiece; source: string } | null>(null);
+
     // Filter content by status
     const newIdeas = ideas.filter(i => i.status === 'idea');
     const drafts = ideas.filter(i => i.status === 'drafted');
     const ready = ideas.filter(i => i.status === 'approved' || i.status === 'posted');
+
+    const handleDragStart = (item: ContentPiece, source: string) => {
+        setDraggedItem({ item, source });
+    };
+
+    const handleDragOver = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.currentTarget.classList.add('bg-indigo-50');
+    };
+
+    const handleDragLeave = (e: React.DragEvent) => {
+        e.currentTarget.classList.remove('bg-indigo-50');
+    };
+
+    const handleDropOnSection = async (targetStatus: 'idea' | 'drafted' | 'approved', e: React.DragEvent) => {
+        e.preventDefault();
+        e.currentTarget.classList.remove('bg-indigo-50');
+
+        if (!draggedItem) return;
+
+        const { item } = draggedItem;
+        if (item.status === targetStatus) {
+            setDraggedItem(null);
+            return; // Same status, no change
+        }
+
+        try {
+            // Call API to update status
+            await updatePostStatus(item.id, targetStatus);
+            // Refresh ideas list
+            if (onRefresh) onRefresh();
+        } catch (error) {
+            console.error("Error updating post:", error);
+            alert("Error al mover el post");
+        }
+
+        setDraggedItem(null);
+    };
 
     const handleGenerate = async () => {
         setIsGenerating(true);
         try {
             // Use the unified workflow - no popup needed!
             // Keywords/creators are fetched from profile settings
-            const result = await runGenerateWorkflow(manualSource);
+            const result = await runGenerateWorkflow(manualSource, manualCount);
 
             if (result.error) {
                 alert(`Error: ${result.error}`);
@@ -283,7 +324,14 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
                     />
                     <div className="space-y-4">
                         {newIdeas.map(item => (
-                            <IdeaCard key={item.id} item={item} onClick={onSelectIdea} />
+                            <div
+                                key={item.id}
+                                draggable
+                                onDragStart={() => handleDragStart(item, 'idea')}
+                                className="cursor-move hover:opacity-75 transition-opacity"
+                            >
+                                <IdeaCard item={item} onClick={onSelectIdea} />
+                            </div>
                         ))}
                         {newIdeas.length === 0 && <EmptyState text="Sin nuevas ideas" />}
                     </div>
@@ -301,7 +349,12 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
                         {/* DRAFTS SECTION */}
-                        <div className="bg-gray-50 rounded-[32px] p-6 border border-gray-100/50">
+                        <div 
+                            className="bg-gray-50 rounded-[32px] p-6 border border-gray-100/50 transition-colors"
+                            onDragOver={handleDragOver}
+                            onDragLeave={handleDragLeave}
+                            onDrop={(e) => handleDropOnSection('drafted', e)}
+                        >
                             <SectionHeader
                                 icon={Clock}
                                 title="Borradores en Curso"
@@ -313,8 +366,10 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
                                 {drafts.map(item => (
                                     <div
                                         key={item.id}
+                                        draggable
+                                        onDragStart={() => handleDragStart(item, 'drafted')}
                                         onClick={() => onSelectIdea(item)}
-                                        className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:border-indigo-100 transition-all cursor-pointer group"
+                                        className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:border-indigo-100 transition-all cursor-move group"
                                     >
                                         <div className="flex justify-between items-start mb-3">
                                             <span className="bg-blue-50 text-blue-600 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider">Editando</span>
@@ -335,7 +390,12 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
                         </div>
 
                         {/* READY SECTION */}
-                        <div className="bg-gray-50 rounded-[32px] p-6 border border-gray-100/50">
+                        <div 
+                            className="bg-gray-50 rounded-[32px] p-6 border border-gray-100/50 transition-colors"
+                            onDragOver={handleDragOver}
+                            onDragLeave={handleDragLeave}
+                            onDrop={(e) => handleDropOnSection('approved', e)}
+                        >
                             <SectionHeader
                                 icon={CheckCircle}
                                 title="Listos para Publicar"
@@ -345,7 +405,12 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
                             />
                             <div className="space-y-4">
                                 {ready.map(item => (
-                                    <div key={item.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm opacity-80 hover:opacity-100 transition-all cursor-default">
+                                    <div 
+                                        key={item.id} 
+                                        draggable
+                                        onDragStart={() => handleDragStart(item, 'approved')}
+                                        className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm opacity-80 hover:opacity-100 transition-all cursor-move"
+                                    >
                                         <div className="flex items-center justify-between mb-3">
                                             <div className="flex items-center gap-2">
                                                 <div className="p-1 bg-green-100 rounded-full text-green-600"><CheckCircle size={12} /></div>

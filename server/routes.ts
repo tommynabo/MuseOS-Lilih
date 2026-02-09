@@ -76,6 +76,35 @@ function getMetric(post: ApifyPost, metric: 'likes' | 'comments' | 'shares'): nu
     }
 }
 
+function filterSensitiveData(text: string): string {
+    // Remove phone numbers (various formats)
+    let filtered = text.replace(/(\+?\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{3,4}/g, '[TELÉFONO]');
+    
+    // Remove WhatsApp numbers
+    filtered = filtered.replace(/\(?WhatsApp\)?[\s]?[\d\s\-\(\)]+/gi, '[WHATSAPP]');
+    
+    // Remove email addresses
+    filtered = filtered.replace(/[\w\.-]+@[\w\.-]+\.\w+/g, '[EMAIL]');
+    
+    // Remove URLs (www.*, http://*, https://)
+    filtered = filtered.replace(/https?:\/\/[^\s]+|www\.[^\s]+/gi, '[WEBSITE]');
+    
+    // Remove physical addresses (look for patterns like "Rua", "Avenida", "Av.", etc.)
+    filtered = filtered.replace(/(?:Rua|Avenida|Av\.|Calle|Street|Rute|nº|Número|Loja|Edifício|Moçambique|Portugal|Brasil|España|México|Argentina)\s+[^\.]*\.?/gi, (match) => {
+        // Only remove if it looks like an address (contains numbers)
+        if (/\d/.test(match)) {
+            return '[DIRECCIÓN]';
+        }
+        return match;
+    });
+    
+    // Remove geographic coordinates and specific location identifiers
+    filtered = filtered.replace(/📍\s*[^[\n]*/gi, '[UBICACIÓN]');
+    filtered = filtered.replace(/Maputo|Lisboa|Porto|Rio de Janeiro|São Paulo/gi, '[CIUDAD]');
+    
+    return filtered.trim();
+}
+
 /**
  * HELPERS
  */
@@ -301,13 +330,33 @@ router.get('/posts', requireAuth, async (req, res) => {
     res.json(data);
 });
 
+router.patch('/posts/:id', requireAuth, async (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
+    const supabase = getUserSupabase(req);
+    
+    if (!['idea', 'drafted', 'approved', 'posted'].includes(status)) {
+        res.status(400).json({ error: "Invalid status" });
+        return;
+    }
+
+    const { data, error } = await supabase.from('posts')
+        .update({ status })
+        .eq('id', id)
+        .select()
+        .single();
+    
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+});
+
 /**
  * UNIFIED WORKFLOW: Generate content using profile settings
  * Uses keywords OR creators from profile (no popup needed)
  * Implements AI-based engagement evaluation
  */
 router.post('/workflow/generate', requireAuth, async (req, res) => {
-    const { source } = req.body; // 'keywords' or 'creators'
+    const { source, count = 3 } = req.body; // 'keywords' or 'creators', default 3 posts
 
     const supabase = getUserSupabase(req);
     const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -326,6 +375,8 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
 
         let allPosts: ApifyPost[] = [];
 
+        console.log(`[WORKFLOW] Starting generation for ${count} posts...`);
+
         if (source === 'keywords') {
             // Search LinkedIn for each keyword
             console.log(`Searching LinkedIn for keywords: ${keywords.join(', ')}`);
@@ -335,9 +386,10 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
                 return;
             }
 
-            // Search for each keyword (max 5 keywords)
+            // Search for each keyword - fetch more to ensure we get the requested count
+            const postsPerKeyword = Math.ceil(count / keywords.length) + 2;
             for (const keyword of keywords.slice(0, 5)) {
-                const posts = await searchLinkedInPosts([keyword], 5) as ApifyPost[];
+                const posts = await searchLinkedInPosts([keyword], postsPerKeyword) as ApifyPost[];
                 allPosts = [...allPosts, ...posts];
             }
         } else {
@@ -351,10 +403,11 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
 
             const creatorUrls = creators.map((c: any) => c.linkedin_url);
             console.log(`Scraping posts from ${creatorUrls.length} creators...`);
-            allPosts = await getCreatorPosts(creatorUrls, 10) as ApifyPost[];
+            // Fetch more posts to ensure we get the requested count
+            allPosts = await getCreatorPosts(creatorUrls, count + 5) as ApifyPost[];
         }
 
-        console.log(`Fetched ${allPosts.length} total posts`);
+        console.log(`Fetched ${allPosts.length} total posts, need ${count}`);
 
         // Step 2: AI-based engagement evaluation
         const highEngagementPosts = await evaluatePostEngagement(allPosts);
@@ -365,14 +418,20 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
             return;
         }
 
-        // Step 3: Process each post (max 5)
+        // Step 3: Process each post
         const processedPosts = [];
 
         if (highEngagementPosts.length > 0) {
             console.log("Full First Post Object:", JSON.stringify(highEngagementPosts[0], null, 2));
         }
 
-        for (const post of highEngagementPosts.slice(0, 5)) {
+        for (const post of highEngagementPosts) {
+            // Stop if we've reached the requested count
+            if (processedPosts.length >= count) {
+                console.log(`Reached target count of ${count} posts`);
+                break;
+            }
+
             // Extract content using robust helper function
             const postContent = extractPostText(post);
 
@@ -381,11 +440,14 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
                 continue;
             }
 
+            // Filter sensitive data before processing
+            const filteredContent = filterSensitiveData(postContent);
+
             // Generate Outline
-            const outline = await generatePostOutline(postContent);
+            const outline = await generatePostOutline(filteredContent);
 
             // Regenerate using custom_instructions (tone of voice)
-            const rewritten = await regeneratePost(outline || '', postContent, customInstructions);
+            const rewritten = await regeneratePost(outline || '', filteredContent, customInstructions);
 
             // Save to DB
             const { error: insertError } = await supabase.from('posts').insert({
@@ -399,6 +461,7 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
                 status: 'idea',
                 meta: {
                     outline,
+                    original_url: post.url || post.postUrl || null,
                     engagement: {
                         likes: getMetric(post, 'likes'),
                         comments: getMetric(post, 'comments'),
@@ -417,6 +480,7 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
             processedPosts.push({
                 original: postContent.substring(0, 200) + '...',
                 generated: rewritten,
+                sourceUrl: post.url || post.postUrl || '',
                 engagement: {
                     likes: getMetric(post, 'likes'),
                     comments: getMetric(post, 'comments'),
@@ -425,11 +489,13 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
             });
         }
 
+        console.log(`Successfully generated ${processedPosts.length}/${count} posts`);
         res.json({
             status: 'success',
             source,
             postsProcessed: processedPosts.length,
-            data: processedPosts
+            data: processedPosts,
+            message: `${processedPosts.length} posts successfully generated`
         });
 
     } catch (error: any) {

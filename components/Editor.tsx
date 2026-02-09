@@ -103,8 +103,21 @@ import React, { useState } from 'react';
                                 {content.originalText}
                                 <span className="text-3xl text-gray-300 absolute -bottom-4 -right-2">"</span>
                                 </p>
-                                <div className="mt-4 pt-3 border-t border-gray-200 text-xs text-gray-400 font-bold uppercase tracking-wide text-right">
-                                    — {content.originalAuthor || 'Fuente Externa'}
+                                <div className="mt-4 pt-3 border-t border-gray-200">
+                                    <div className="text-xs text-gray-400 font-bold uppercase tracking-wide text-right mb-2">
+                                        — {content.originalAuthor || 'Fuente Externa'}
+                                    </div>
+                                    {content.originalUrl && (
+                                        <a 
+                                            href={content.originalUrl} 
+                                            target="_blank" 
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center gap-2 text-xs text-indigo-600 hover:text-indigo-700 font-bold transition-colors"
+                                        >
+                                            <span>🔗</span>
+                                            Ver Post Original
+                                        </a>
+                                    )}
                                 </div>
                             </div>
                         </div>

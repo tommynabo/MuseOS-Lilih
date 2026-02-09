@@ -65,13 +65,14 @@ export const runResearchWorkflow = async (topic: string) => {
 /**
  * Unified workflow that uses profile settings (no popup needed)
  * @param source - 'keywords' or 'creators'
+ * @param count - Number of posts to generate
  */
-export const runGenerateWorkflow = async (source: 'keywords' | 'creators') => {
+export const runGenerateWorkflow = async (source: 'keywords' | 'creators', count: number = 3) => {
   const headers = await getHeaders();
   const response = await fetch(`${API_URL}/workflow/generate`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ source })
+    body: JSON.stringify({ source, count })
   });
   return response.json();
 };
@@ -110,5 +111,18 @@ export const fetchPosts = async () => {
     headers,
     cache: 'no-store'
   });
+  return response.json();
+};
+
+export const updatePostStatus = async (postId: string, status: 'idea' | 'drafted' | 'approved' | 'posted') => {
+  const headers = await getHeaders();
+  const response = await fetch(`${API_URL}/posts/${postId}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ status })
+  });
+  if (!response.ok) {
+    throw new Error('Failed to update post status');
+  }
   return response.json();
 };

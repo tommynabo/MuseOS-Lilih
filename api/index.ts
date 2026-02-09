@@ -199,13 +199,43 @@ async function generatePostOutline(content: string): Promise<string> {
     return response.choices[0].message.content || '';
 }
 
+function filterSensitiveData(text: string): string {
+    // Remove phone numbers (various formats)
+    let filtered = text.replace(/(\+?\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{3,4}/g, '[TELÉFONO]');
+    
+    // Remove WhatsApp numbers
+    filtered = filtered.replace(/\(?WhatsApp\)?[\s]?[\d\s\-\(\)]+/gi, '[WHATSAPP]');
+    
+    // Remove email addresses
+    filtered = filtered.replace(/[\w\.-]+@[\w\.-]+\.\w+/g, '[EMAIL]');
+    
+    // Remove URLs (www.*, http://*, https://)
+    filtered = filtered.replace(/https?:\/\/[^\s]+|www\.[^\s]+/gi, '[WEBSITE]');
+    
+    // Remove physical addresses (look for patterns like "Rua", "Avenida", "Av.", etc.)
+    filtered = filtered.replace(/(?:Rua|Avenida|Av\.|Calle|Street|Rua|Rute|nº|Número|Loja|Edifício|Moçambique|Portugal|Brasil|España|México|Argentina)\s+[^\.]*\.?/gi, (match) => {
+        // Only remove if it looks like an address (contains numbers)
+        if (/\d/.test(match)) {
+            return '[DIRECCIÓN]';
+        }
+        return match;
+    });
+    
+    // Remove geographic coordinates and specific location identifiers
+    filtered = filtered.replace(/📍\s*[^[\n]*/gi, '[UBICACIÓN]');
+    filtered = filtered.replace(/Maputo|Lisboa|Porto|Rio de Janeiro|São Paulo/gi, '[CIUDAD]');
+    
+    return filtered.trim();
+}
+
 async function regeneratePost(outline: string, original: string, customInstructions: string): Promise<string> {
     const systemPrompt = customInstructions || "Eres un redactor experto en Ghostwriting. Párrafos cortos. Sin emojis. Tutea.";
+    const filteredOriginal = filterSensitiveData(original);
     const response = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: `Reescribe este post basándote en el outline:\n[OUTLINE]: ${outline}\n[ORIGINAL]: ${original}\n\nGenera el post final.` }
+            { role: "system", content: `${systemPrompt}\n\nIMPORTANTE: Nunca incluyas en el post generado:\n- Números de teléfono\n- Emails\n- URLs o direcciones web\n- Direcciones físicas\n- Información de contacto\n- Datos personales o de ubicación específica` },
+            { role: "user", content: `Reescribe este post basándote en el outline:\n[OUTLINE]: ${outline}\n[ORIGINAL]: ${filteredOriginal}\n\nGenera el post final SIN incluir datos de contacto.` }
         ]
     });
     return response.choices[0].message.content || '';
@@ -249,9 +279,28 @@ app.get('/api/posts', requireAuth, async (req, res) => {
     res.json(data);
 });
 
+app.patch('/api/posts/:id', requireAuth, async (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
+    const supabase = getUserSupabase(req);
+    
+    if (!['idea', 'drafted', 'approved', 'posted'].includes(status)) {
+        return res.status(400).json({ error: "Invalid status" });
+    }
+
+    const { data, error } = await supabase.from('posts')
+        .update({ status })
+        .eq('id', id)
+        .select()
+        .single();
+    
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+});
+
 // ===== MAIN WORKFLOW =====
 app.post('/api/workflow/generate', requireAuth, async (req, res) => {
-    const { source } = req.body; // 'keywords' or 'creators'
+    const { source, count = 3 } = req.body; // 'keywords' or 'creators', default 3 posts
     const supabase = getUserSupabase(req);
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return res.status(401).json({ error: "Unauthorized" });
@@ -264,25 +313,36 @@ app.post('/api/workflow/generate', requireAuth, async (req, res) => {
         const customInstructions = profile.custom_instructions || '';
         let allPosts: ApifyPost[] = [];
 
+        console.log(`[WORKFLOW] Starting generation for ${count} posts...`);
+
         if (source === 'keywords') {
             if (keywords.length === 0) return res.status(400).json({ error: "No keywords configured." });
+            // Fetch more posts to ensure we get the requested count
+            const postsPerKeyword = Math.ceil(count / keywords.length) + 2;
             for (const kw of keywords.slice(0, 5)) {
-                allPosts = [...allPosts, ...await searchLinkedInPosts([kw], 5)];
+                allPosts = [...allPosts, ...await searchLinkedInPosts([kw], postsPerKeyword)];
             }
         } else {
             const { data: creators } = await supabase.from('creators').select('linkedin_url');
             if (!creators?.length) return res.status(400).json({ error: "No creators configured." });
-            allPosts = await getCreatorPosts(creators.map((c: any) => c.linkedin_url), 10);
+            // Fetch more posts to ensure we get the requested count
+            allPosts = await getCreatorPosts(creators.map((c: any) => c.linkedin_url), count + 5);
         }
 
-        console.log(`Fetched ${allPosts.length} posts`);
+        console.log(`Fetched ${allPosts.length} posts, need ${count}`);
         const highEngagement = await evaluatePostEngagement(allPosts);
-        console.log(`Selected ${highEngagement.length} high-engagement posts`);
+        console.log(`Selected ${highEngagement.length} high-engagement posts from evaluation`);
 
         if (highEngagement.length === 0) return res.json({ status: 'success', data: [], message: "No posts with sufficient text content found" });
 
         const results = [];
         for (const post of highEngagement) {
+            // Stop if we've reached the requested count
+            if (results.length >= count) {
+                console.log(`Reached target count of ${count} posts`);
+                break;
+            }
+
             const postText = extractPostText(post);
             if (!postText) {
                 console.warn("Skipping post with no text:", post.url || post.id);
@@ -301,6 +361,7 @@ app.post('/api/workflow/generate', requireAuth, async (req, res) => {
                     status: 'drafted',
                     meta: {
                         outline,
+                        original_url: post.url || null,
                         engagement: {
                             likes: getMetric(post, 'likes'),
                             comments: getMetric(post, 'comments'),
@@ -316,7 +377,8 @@ app.post('/api/workflow/generate', requireAuth, async (req, res) => {
 
                 results.push({
                     original: postText.substring(0, 200) + '...',
-                    generated: rewritten.substring(0, 300) + '...'
+                    generated: rewritten.substring(0, 300) + '...',
+                    sourceUrl: post.url
                 });
             } catch (postError: any) {
                 console.error("Error processing post:", postError);
@@ -324,6 +386,7 @@ app.post('/api/workflow/generate', requireAuth, async (req, res) => {
             }
         }
 
+        console.log(`Successfully generated ${results.length}/${count} posts`);
         res.json({
             status: 'success',
             postsProcessed: results.length,
