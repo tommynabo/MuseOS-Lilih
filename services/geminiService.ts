@@ -126,3 +126,15 @@ export const updatePostStatus = async (postId: string, status: 'idea' | 'drafted
   }
   return response.json();
 };
+
+export const deletePost = async (postId: string) => {
+  const headers = await getHeaders();
+  const response = await fetch(`${API_URL}/posts/${postId}`, {
+    method: 'DELETE',
+    headers
+  });
+  if (!response.ok) {
+    throw new Error('Failed to delete post');
+  }
+  return response.json();
+};

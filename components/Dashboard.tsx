@@ -1,20 +1,22 @@
 import React, { useState } from 'react';
 import { Stats, ContentPiece } from '../types';
 import IdeaCard from './IdeaCard';
-import { PenTool, CheckCircle, Clock, Search, Bell, Sparkles, Zap, TrendingUp, Users, Hash, ChevronRight, Calendar, ExternalLink } from 'lucide-react';
+import { PenTool, CheckCircle, Clock, Search, Bell, Sparkles, Zap, TrendingUp, Users, Hash, ChevronRight, Calendar, ExternalLink, Trash2 } from 'lucide-react';
 
 interface DashboardProps {
     stats: Stats;
     ideas: ContentPiece[];
     onSelectIdea: (idea: ContentPiece) => void;
     onRefresh?: () => void;
+    onUpdatePost: (id: string, status: 'idea' | 'drafted' | 'approved' | 'posted') => void;
+    onDeletePost: (id: string) => void;
 }
 
-import { runGenerateWorkflow, updatePostStatus } from '../services/geminiService';
+import { runGenerateWorkflow } from '../services/geminiService';
 
 // ... (existing imports, but keep them if not replacing top of file)
 
-const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRefresh }) => {
+const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRefresh, onUpdatePost, onDeletePost }) => {
     // State for the Hero Section controls
     const [manualCount, setManualCount] = useState(3);
     const [manualSource, setManualSource] = useState<'keywords' | 'creators'>('keywords');
@@ -58,16 +60,8 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
             return; // Same status, no change
         }
 
-        try {
-            // Call API to update status
-            await updatePostStatus(item.id, targetStatus);
-            // Refresh ideas list
-            if (onRefresh) onRefresh();
-        } catch (error) {
-            console.error("Error updating post:", error);
-            alert("Error al mover el post");
-        }
-
+        // Optimistic Update via Parent
+        onUpdatePost(item.id, targetStatus);
         setDraggedItem(null);
     };
 
@@ -330,7 +324,7 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
                                 onDragStart={() => handleDragStart(item, 'idea')}
                                 className="cursor-move hover:opacity-75 transition-opacity"
                             >
-                                <IdeaCard item={item} onClick={onSelectIdea} />
+                                <IdeaCard item={item} onClick={onSelectIdea} onDelete={onDeletePost} />
                             </div>
                         ))}
                         {newIdeas.length === 0 && <EmptyState text="Sin nuevas ideas" />}

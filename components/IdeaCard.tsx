@@ -1,13 +1,14 @@
 import React from 'react';
-import { ArrowRight, Sparkles, Quote, ExternalLink } from 'lucide-react';
+import { ArrowRight, Sparkles, Quote, ExternalLink, Trash2 } from 'lucide-react';
 import { ContentPiece } from '../types';
 
 interface IdeaCardProps {
   item: ContentPiece;
   onClick: (item: ContentPiece) => void;
+  onDelete?: (id: string) => void;
 }
 
-const IdeaCard: React.FC<IdeaCardProps> = ({ item, onClick }) => {
+const IdeaCard: React.FC<IdeaCardProps> = ({ item, onClick, onDelete }) => {
   return (
     <div
       onClick={() => onClick(item)}
@@ -61,6 +62,19 @@ const IdeaCard: React.FC<IdeaCardProps> = ({ item, onClick }) => {
           {item.generatedDraft.hook}
         </p>
       </div>
+
+      {onDelete && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            if (window.confirm('¿Eliminar idea?')) onDelete(item.id);
+          }}
+          className="absolute top-2 right-2 p-2 bg-white rounded-full text-gray-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all shadow-sm border border-gray-100"
+          title="Eliminar"
+        >
+          <Trash2 size={14} />
+        </button>
+      )}
     </div>
   );
 };

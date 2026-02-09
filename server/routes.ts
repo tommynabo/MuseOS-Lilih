@@ -330,6 +330,9 @@ router.get('/posts', requireAuth, async (req, res) => {
     res.json(data);
 });
 
+/**
+ * UPDATE STATUS
+ */
 router.patch('/posts/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
@@ -348,6 +351,22 @@ router.patch('/posts/:id', requireAuth, async (req, res) => {
 
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
+});
+
+/**
+ * DELETE POST
+ */
+router.delete('/posts/:id', requireAuth, async (req, res) => {
+    const { id } = req.params;
+    const supabase = getUserSupabase(req);
+
+    const { error } = await supabase
+        .from('posts')
+        .delete()
+        .eq('id', id);
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ message: "Post deleted successfully" });
 });
 
 /**

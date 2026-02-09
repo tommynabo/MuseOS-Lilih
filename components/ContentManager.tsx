@@ -9,7 +9,7 @@ interface ContentManagerProps {
   onSelectIdea: (idea: ContentPiece) => void;
 }
 
-const ContentManager: React.FC<ContentManagerProps> = ({ ideas, onSelectIdea }) => {
+const ContentManager: React.FC<ContentManagerProps> = ({ ideas, onSelectIdea, onUpdatePost, onDeletePost }) => {
   // Filter content by status
   const newIdeas = ideas.filter(i => i.status === 'idea');
   const drafts = ideas.filter(i => i.status === 'drafted');
@@ -61,19 +61,8 @@ const ContentManager: React.FC<ContentManagerProps> = ({ ideas, onSelectIdea }) 
       return;
     }
 
-    try {
-      await updatePostStatus(item.id, targetStatus);
-      // Optimistic update or refresh logic would be ideal here, 
-      // but for now we rely on the parent (if passed) or implicit update
-      // Since ContentManager props don't include onRefresh, we might need to add it or just alert success
-      // Ideally, 'ideas' prop should update. 
-      // Suggestion: Add onRefresh prop to ContentManager in next step if missing.
-      window.location.reload(); // Temporary brute force refresh until prop is added
-    } catch (error) {
-      console.error("Error updating post:", error);
-      alert("Error al mover el post");
-    }
-
+    // Optimistic Update via Parent
+    onUpdatePost(item.id, targetStatus);
     setDraggedItem(null);
   };
 
@@ -107,7 +96,7 @@ const ContentManager: React.FC<ContentManagerProps> = ({ ideas, onSelectIdea }) 
                 draggable
                 onDragStart={() => handleDragStart(item, 'idea')}
               >
-                <IdeaCard item={item} onClick={onSelectIdea} />
+                <IdeaCard item={item} onClick={onSelectIdea} onDelete={onDeletePost} />
               </div>
             ))}
             {newIdeas.length === 0 && <EmptyState text="Sin nuevas ideas" />}

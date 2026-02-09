@@ -121,6 +121,41 @@ const App: React.FC = () => {
     setSelectedIdea(null);
   };
 
+  /* New Handlers for Optimistic Updates */
+  const handleUpdatePost = async (postId: string, newStatus: 'idea' | 'drafted' | 'approved' | 'posted') => {
+    // 1. Optimistic Update
+    setContentPieces(prev => prev.map(p =>
+      p.id === postId ? { ...p, status: newStatus } : p
+    ));
+
+    // 2. API Call (background)
+    try {
+      const { updatePostStatus } = await import('./services/geminiService');
+      await updatePostStatus(postId, newStatus);
+    } catch (error) {
+      console.error("Failed to update post status:", error);
+      // Revert on failure (could be improved with a history stack)
+      refreshPosts();
+      alert("Error al actualizar el estado. Se revertirán los cambios.");
+    }
+  };
+
+  const handleDeletePost = async (postId: string) => {
+    // 1. Optimistic Update
+    setContentPieces(prev => prev.filter(p => p.id !== postId));
+    if (selectedIdea?.id === postId) setSelectedIdea(null);
+
+    // 2. API Call (background)
+    try {
+      const { deletePost } = await import('./services/geminiService');
+      await deletePost(postId);
+    } catch (error) {
+      console.error("Failed to delete post:", error);
+      refreshPosts();
+      alert("Error al eliminar el post.");
+    }
+  };
+
   const handleProfileUpdate = async (updated: ClientProfile) => {
     // Optimistic update
     setCurrentProfile(updated);
@@ -166,6 +201,7 @@ const App: React.FC = () => {
         clientProfile={currentProfile}
         onClose={() => setSelectedIdea(null)}
         onSave={handleSaveContent}
+        onDelete={handleDeletePost}
       />
     );
   }
@@ -183,12 +219,16 @@ const App: React.FC = () => {
           ideas={contentPieces}
           onSelectIdea={handleIdeaSelect}
           onRefresh={refreshPosts}
+          onUpdatePost={handleUpdatePost}
+          onDeletePost={handleDeletePost}
         />
       )}
       {activeTab === 'content' && (
         <ContentManager
           ideas={contentPieces}
           onSelectIdea={handleIdeaSelect}
+          onUpdatePost={handleUpdatePost}
+          onDeletePost={handleDeletePost}
         />
       )}
       {activeTab === 'settings' && (
