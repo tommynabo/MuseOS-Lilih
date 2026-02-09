@@ -48,10 +48,38 @@ interface ApifyPost {
     id?: string;
     url?: string;
     text?: string;
+    postText?: string;
+    content?: string;
+    description?: string;
     author?: { name?: string };
     likesCount?: number;
     commentsCount?: number;
     sharesCount?: number;
+    likesNumber?: number;
+    commentsNumber?: number;
+    sharesNumber?: number;
+}
+
+// ===== HELPER FUNCTIONS =====
+function extractPostText(post: ApifyPost): string {
+    return (
+        post.text ||
+        post.postText ||
+        post.content ||
+        post.description ||
+        ''
+    ).trim().substring(0, 500);
+}
+
+function getMetric(post: ApifyPost, metric: 'likes' | 'comments' | 'shares'): number {
+    switch(metric) {
+        case 'likes':
+            return post.likesCount || post.likesNumber || 0;
+        case 'comments':
+            return post.commentsCount || post.commentsNumber || 0;
+        case 'shares':
+            return post.sharesCount || post.sharesNumber || 0;
+    }
 }
 
 // ===== APIFY FUNCTIONS =====
@@ -92,10 +120,10 @@ async function evaluatePostEngagement(posts: ApifyPost[]): Promise<ApifyPost[]> 
 
     const postsData = posts.map((p, idx) => ({
         index: idx,
-        text: p.text?.substring(0, 200) || '',
-        likes: p.likesCount || 0,
-        comments: p.commentsCount || 0,
-        shares: p.sharesCount || 0
+        text: extractPostText(p),
+        likes: getMetric(p, 'likes'),
+        comments: getMetric(p, 'comments'),
+        shares: getMetric(p, 'shares')
     }));
 
     try {
@@ -117,17 +145,23 @@ async function evaluatePostEngagement(posts: ApifyPost[]): Promise<ApifyPost[]> 
         const result = JSON.parse(content);
         const selectedIndices = result.indices || [];
 
-        let selectedPosts = selectedIndices.map((i: number) => posts[i]).filter(Boolean);
+        let selectedPosts = selectedIndices
+            .map((i: number) => posts[i])
+            .filter(p => p && extractPostText(p).length > 0);
 
         // FALLBACK: If AI selects fewer than 2 posts, fill up with top sorted posts
         if (selectedPosts.length < 2) {
             console.log("AI selected too few posts, using fallback sorting.");
-            const sorted = [...posts].sort((a, b) =>
-                ((b.likesCount || 0) + (b.commentsCount || 0) * 2) -
-                ((a.likesCount || 0) + (a.commentsCount || 0) * 2)
-            );
-            // Deduplicate
-            const existingIds = new Set(selectedPosts.map(p => p.url));
+            const sorted = [...posts]
+                .filter(p => extractPostText(p).length > 0)
+                .sort((a, b) => {
+                    const scoreA = getMetric(a, 'likes') + getMetric(a, 'comments') * 2 + getMetric(a, 'shares') * 3;
+                    const scoreB = getMetric(b, 'likes') + getMetric(b, 'comments') * 2 + getMetric(b, 'shares') * 3;
+                    return scoreB - scoreA;
+                });
+            
+            // Deduplicate by URL
+            const existingIds = new Set(selectedPosts.map(p => p.url).filter(Boolean));
             for (const p of sorted) {
                 if (selectedPosts.length >= 5) break;
                 if (!existingIds.has(p.url)) {
@@ -137,10 +171,20 @@ async function evaluatePostEngagement(posts: ApifyPost[]): Promise<ApifyPost[]> 
             }
         }
 
-        return selectedPosts.slice(0, 5);
+        const finalSelection = selectedPosts.slice(0, 5);
+        console.log(`Selected ${finalSelection.length} posts for processing`);
+        return finalSelection;
     } catch (error) {
         console.error("Engagement evaluation error (using fallback):", error);
-        return posts.sort((a, b) => ((b.likesCount || 0) + (b.commentsCount || 0)) - ((a.likesCount || 0) + (a.commentsCount || 0))).slice(0, 5);
+        // Ultimate fallback: just sort by engagement metrics
+        return posts
+            .filter(p => extractPostText(p).length > 0)
+            .sort((a, b) => {
+                const scoreA = getMetric(a, 'likes') + getMetric(a, 'comments') * 2;
+                const scoreB = getMetric(b, 'likes') + getMetric(b, 'comments') * 2;
+                return scoreB - scoreA;
+            })
+            .slice(0, 5);
     }
 }
 
@@ -235,24 +279,57 @@ app.post('/api/workflow/generate', requireAuth, async (req, res) => {
         const highEngagement = await evaluatePostEngagement(allPosts);
         console.log(`Selected ${highEngagement.length} high-engagement posts`);
 
-        if (highEngagement.length === 0) return res.json({ status: 'success', data: [], message: "No high-engagement posts" });
+        if (highEngagement.length === 0) return res.json({ status: 'success', data: [], message: "No posts with sufficient text content found" });
 
         const results = [];
-        for (const post of highEngagement.slice(0, 5)) {
-            if (!post.text) continue;
-            const outline = await generatePostOutline(post.text);
-            const rewritten = await regeneratePost(outline, post.text, customInstructions);
+        for (const post of highEngagement) {
+            const postText = extractPostText(post);
+            if (!postText) {
+                console.warn("Skipping post with no text:", post.url || post.id);
+                continue;
+            }
 
-            await supabase.from('posts').insert({
-                user_id: user.id, original_content: post.text, generated_content: rewritten,
-                type: source === 'keywords' ? 'research' : 'parasite', status: 'drafted',
-                meta: { outline, engagement: { likes: post.likesCount, comments: post.commentsCount, shares: post.sharesCount } }
-            });
+            try {
+                const outline = await generatePostOutline(postText);
+                const rewritten = await regeneratePost(outline, postText, customInstructions);
 
-            results.push({ original: post.text.substring(0, 200) + '...', generated: rewritten });
+                const inserted = await supabase.from('posts').insert({
+                    user_id: user.id,
+                    original_content: postText,
+                    generated_content: rewritten,
+                    type: source === 'keywords' ? 'research' : 'parasite',
+                    status: 'drafted',
+                    meta: {
+                        outline,
+                        engagement: {
+                            likes: getMetric(post, 'likes'),
+                            comments: getMetric(post, 'comments'),
+                            shares: getMetric(post, 'shares')
+                        }
+                    }
+                }).select().single();
+
+                if (inserted.error) {
+                    console.error("Error inserting post:", inserted.error);
+                    continue;
+                }
+
+                results.push({
+                    original: postText.substring(0, 200) + '...',
+                    generated: rewritten.substring(0, 300) + '...'
+                });
+            } catch (postError: any) {
+                console.error("Error processing post:", postError);
+                continue;
+            }
         }
 
-        res.json({ status: 'success', postsProcessed: results.length, data: results });
+        res.json({
+            status: 'success',
+            postsProcessed: results.length,
+            data: results,
+            message: `${results.length} posts successfully generated`
+        });
     } catch (error: any) {
         console.error("Workflow error:", error);
         res.status(500).json({ error: error.message });

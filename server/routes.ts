@@ -28,12 +28,18 @@ interface ApifyPost {
     id?: string;
     url?: string;
     text?: string;
+    postText?: string;
+    content?: string;
+    description?: string;
     author?: {
         name?: string;
     };
     likesCount?: number;
     commentsCount?: number;
     sharesCount?: number;
+    likesNumber?: number;
+    commentsNumber?: number;
+    sharesNumber?: number;
 }
 
 interface CreateCreatorRequest {
@@ -44,6 +50,30 @@ interface CreateCreatorRequest {
 
 interface ResearchRequest {
     topic: string;
+}
+
+/**
+ * HELPER FUNCTIONS
+ */
+function extractPostText(post: ApifyPost): string {
+    return (
+        post.text ||
+        post.postText ||
+        post.content ||
+        post.description ||
+        ''
+    ).trim().substring(0, 500);
+}
+
+function getMetric(post: ApifyPost, metric: 'likes' | 'comments' | 'shares'): number {
+    switch(metric) {
+        case 'likes':
+            return post.likesCount || post.likesNumber || 0;
+        case 'comments':
+            return post.commentsCount || post.commentsNumber || 0;
+        case 'shares':
+            return post.sharesCount || post.sharesNumber || 0;
+    }
 }
 
 /**
@@ -127,35 +157,36 @@ router.post('/workflow/parasite', requireAuth, async (req, res) => {
         const customInstructions = profile?.custom_instructions || '';
 
         for (const post of highEngagementPosts) {
-            if (!post.text) continue;
+            const postText = extractPostText(post);
+            if (!postText) continue;
 
             // Generate Outline
-            const outline = await generatePostOutline(post.text);
+            const outline = await generatePostOutline(postText);
 
             // Regenerate Content using custom_instructions as master prompt
-            const rewritten = await regeneratePost(outline || '', post.text, customInstructions);
+            const rewritten = await regeneratePost(outline || '', postText, customInstructions);
 
             // Save to DB
             await supabase.from('posts').insert({
                 user_id: user.id,
                 original_post_id: post.id || 'unknown',
                 original_url: post.url || '',
-                original_content: post.text,
+                original_content: postText,
                 original_author: post.author?.name || 'Unknown',
                 generated_content: rewritten,
                 type: 'parasite',
                 meta: {
                     outline,
                     engagement: {
-                        likes: post.likesCount,
-                        comments: post.commentsCount,
-                        shares: post.sharesCount
+                        likes: getMetric(post, 'likes'),
+                        comments: getMetric(post, 'comments'),
+                        shares: getMetric(post, 'shares')
                     }
                 }
             });
 
             processedPosts.push({
-                original: post.text,
+                original: postText,
                 generated: rewritten,
                 outline: outline
             });
@@ -191,24 +222,25 @@ router.post('/workflow/research', requireAuth, async (req, res) => {
         const results = [];
 
         for (const post of linkedInPosts) {
-            if (!post.text) continue;
+            const postText = extractPostText(post);
+            if (!postText) continue;
 
             // Step 2: Deep Research
             const news = await searchGoogleNews([topic], 3);
 
             // Step 3: Ideas
-            const ideas = await generateIdeasFromResearch(post.text, news);
+            const ideas = await generateIdeasFromResearch(postText, news);
 
             // Save Research
             await supabase.from('posts').insert({
                 user_id: user.id,
-                original_content: post.text, // The "Search Result"
+                original_content: postText, // The "Search Result"
                 type: 'research',
                 meta: { news, ideas }
             });
 
             results.push({
-                sourcePost: post.text,
+                sourcePost: postText,
                 research: news,
                 ideas: ideas
             });
@@ -341,9 +373,8 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
         }
 
         for (const post of highEngagementPosts.slice(0, 5)) {
-            // Robust content extraction
-            // Different Apify actors use different field names (text, postText, content, description)
-            let postContent = post.text || post.postText || post.content || post.description;
+            // Extract content using robust helper function
+            const postContent = extractPostText(post);
 
             if (!postContent) {
                 console.log(`Skipping post ID ${post.id} due to missing content.`);
@@ -369,9 +400,9 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
                 meta: {
                     outline,
                     engagement: {
-                        likes: post.likesCount || post.likes || 0,
-                        comments: post.commentsCount || post.comments || 0,
-                        shares: post.sharesCount || post.shares || 0
+                        likes: getMetric(post, 'likes'),
+                        comments: getMetric(post, 'comments'),
+                        shares: getMetric(post, 'shares')
                     },
                     raw_debug: post // Saving the whole object in meta to inspect in Supabase if needed
                 }
@@ -384,12 +415,12 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
             }
 
             processedPosts.push({
-                original: post.text.substring(0, 200) + '...',
+                original: postContent.substring(0, 200) + '...',
                 generated: rewritten,
                 engagement: {
-                    likes: post.likesCount,
-                    comments: post.commentsCount,
-                    shares: post.sharesCount
+                    likes: getMetric(post, 'likes'),
+                    comments: getMetric(post, 'comments'),
+                    shares: getMetric(post, 'shares')
                 }
             });
         }
