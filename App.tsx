@@ -86,6 +86,7 @@ const App: React.FC = () => {
           sourceType: p.type === 'parasite' ? 'creator_reference' : 'keyword_search',
           originalAuthor: p.original_author || 'Unknown',
           originalUrl: p.original_url,
+          sourceUrl: p.original_url, // Fix: Ensure sourceUrl is populated for Dashboard
           originalText: p.original_content,
           viralMetrics: p.meta?.engagement || { likes: 0, comments: 0 },
           tags: [p.type === 'parasite' ? 'Viral' : 'Research'],

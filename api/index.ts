@@ -402,7 +402,7 @@ app.post('/api/workflow/generate', requireAuth, async (req, res) => {
                     original_content: postText,
                     generated_content: rewritten,
                     type: source === 'keywords' ? 'research' : 'parasite',
-                    status: 'drafted',
+                    status: 'idea',
                     meta: {
                         outline,
                         original_url: post.url || null,

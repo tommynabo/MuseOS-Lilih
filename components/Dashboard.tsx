@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Stats, ContentPiece } from '../types';
 import IdeaCard from './IdeaCard';
+import LinkedInPreview from './LinkedInPreview';
 import { PenTool, CheckCircle, Clock, Search, Bell, Sparkles, Zap, TrendingUp, Users, Hash, ChevronRight, Calendar, ExternalLink, Trash2 } from 'lucide-react';
 
 interface DashboardProps {
@@ -29,6 +30,7 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
 
     // Drag and drop state
     const [draggedItem, setDraggedItem] = useState<{ item: ContentPiece; source: string } | null>(null);
+    const [previewPost, setPreviewPost] = useState<ContentPiece | null>(null);
 
     // Filter content by status
     const newIdeas = ideas.filter(i => i.status === 'idea');
@@ -304,10 +306,16 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
                 </div>
             </div>
 
-            {/* NEW LAYOUT GRID */}
+            {/* ... (inside component) */}
+
+
+            {/* DIVIDER */}
+            <div className="w-full h-px bg-gray-200 my-8"></div>
+
+            {/* NEW LAYOUT GRID - FLATTENED */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
 
-                {/* LEFT COLUMN: IDEAS (Backlog) */}
+                {/* COLUMN 1: IDEAS (Backlog) */}
                 <div className="flex flex-col gap-6">
                     <SectionHeader
                         icon={PenTool}
@@ -331,115 +339,119 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
                     </div>
                 </div>
 
-                {/* RIGHT COLUMN: CONTENT ROOM (Drafts & Ready) */}
-                <div className="lg:col-span-2 flex flex-col gap-6">
-                    <div className="flex items-center justify-between mb-2">
-                        <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                            <span className="w-1.5 h-6 bg-indigo-600 rounded-full"></span>
-                            Sala de Redacción
-                        </h2>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-
-                        {/* DRAFTS SECTION */}
-                        <div
-                            className="bg-gray-50 rounded-[32px] p-6 border border-gray-100/50 transition-colors"
-                            onDragOver={handleDragOver}
-                            onDragLeave={handleDragLeave}
-                            onDrop={(e) => handleDropOnSection('drafted', e)}
-                        >
-                            <SectionHeader
-                                icon={Clock}
-                                title="Borradores en Curso"
-                                count={drafts.length}
-                                colorClass="bg-blue-100"
-                                iconColorClass="text-blue-600"
-                            />
-                            <div className="space-y-4">
-                                {drafts.map(item => (
-                                    <div
-                                        key={item.id}
-                                        draggable
-                                        onDragStart={() => handleDragStart(item, 'drafted')}
-                                        onClick={() => onSelectIdea(item)}
-                                        className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:border-indigo-100 transition-all cursor-move group"
-                                    >
-                                        <div className="flex justify-between items-start mb-3">
-                                            <span className="bg-blue-50 text-blue-600 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider">Editando</span>
-                                            <div className="flex items-center gap-2">
-                                                {item.sourceUrl && (
-                                                    <a
-                                                        href={item.sourceUrl}
-                                                        target="_blank"
-                                                        rel="noopener noreferrer"
-                                                        onClick={(e) => e.stopPropagation()}
-                                                        className="text-gray-300 hover:text-blue-500 transition-colors"
-                                                        title="Ver fuente"
-                                                    >
-                                                        <ExternalLink size={14} />
-                                                    </a>
-                                                )}
-                                                <ChevronRight size={16} className="text-gray-300 group-hover:text-indigo-500 transition-colors" />
-                                            </div>
-                                        </div>
-                                        <h3 className="font-bold text-gray-800 text-sm mb-2 leading-snug group-hover:text-indigo-700 transition-colors">{item.generatedDraft.hook}</h3>
-                                        <p className="text-xs text-gray-500 line-clamp-2 mb-3 leading-relaxed">{item.generatedDraft.body}</p>
-                                        <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-50">
-                                            <span className="text-[10px] text-gray-400">Última ed. hace 2h</span>
-                                            <div className="w-16 h-1 bg-gray-100 rounded-full overflow-hidden">
-                                                <div className="h-full bg-blue-500 w-3/4 rounded-full"></div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                                {drafts.length === 0 && <EmptyState text="No hay borradores activos" />}
-                            </div>
-                        </div>
-
-                        {/* READY SECTION */}
-                        <div
-                            className="bg-gray-50 rounded-[32px] p-6 border border-gray-100/50 transition-colors"
-                            onDragOver={handleDragOver}
-                            onDragLeave={handleDragLeave}
-                            onDrop={(e) => handleDropOnSection('approved', e)}
-                        >
-                            <SectionHeader
-                                icon={CheckCircle}
-                                title="Listos para Publicar"
-                                count={ready.length}
-                                colorClass="bg-green-100"
-                                iconColorClass="text-green-600"
-                            />
-                            <div className="space-y-4">
-                                {ready.map(item => (
-                                    <div
-                                        key={item.id}
-                                        draggable
-                                        onDragStart={() => handleDragStart(item, 'approved')}
-                                        className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm opacity-80 hover:opacity-100 transition-all cursor-move"
-                                    >
-                                        <div className="flex items-center justify-between mb-3">
-                                            <div className="flex items-center gap-2">
-                                                <div className="p-1 bg-green-100 rounded-full text-green-600"><CheckCircle size={12} /></div>
-                                                <span className="text-[10px] font-bold text-gray-400 uppercase">Programado</span>
-                                            </div>
-                                            <span className="text-[10px] font-bold text-gray-400">Mañana, 09:00</span>
-                                        </div>
-                                        <h3 className="font-medium text-gray-800 text-sm leading-snug">{item.generatedDraft.hook}</h3>
-                                        <button className="w-full mt-3 py-2 text-xs font-bold text-gray-500 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
-                                            Ver Preview
+                {/* COLUMN 2: DRAFTS */}
+                <div
+                    className="flex flex-col gap-6 bg-gray-50/50 rounded-[32px] p-6 border border-gray-100/50 transition-colors h-full min-h-[500px]"
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={(e) => handleDropOnSection('drafted', e)}
+                >
+                    <SectionHeader
+                        icon={Clock}
+                        title="Borradores"
+                        count={drafts.length}
+                        colorClass="bg-blue-100"
+                        iconColorClass="text-blue-600"
+                    />
+                    <div className="space-y-4">
+                        {drafts.map(item => (
+                            <div
+                                key={item.id}
+                                draggable
+                                onDragStart={() => handleDragStart(item, 'drafted')}
+                                onClick={() => onSelectIdea(item)}
+                                className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:border-indigo-100 transition-all cursor-move group"
+                            >
+                                <div className="flex justify-between items-start mb-3">
+                                    <span className="bg-blue-50 text-blue-600 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider">Editando</span>
+                                    <div className="flex items-center gap-2">
+                                        {item.sourceUrl && (
+                                            <a
+                                                href={item.sourceUrl}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                onClick={(e) => e.stopPropagation()}
+                                                className="text-gray-300 hover:text-blue-500 transition-colors"
+                                                title="Ver fuente"
+                                            >
+                                                <ExternalLink size={14} />
+                                            </a>
+                                        )}
+                                        <button onClick={(e) => { e.stopPropagation(); onDeletePost(item.id); }} className="text-gray-300 hover:text-red-500 transition-colors">
+                                            <Trash2 size={14} />
                                         </button>
                                     </div>
-                                ))}
-                                {ready.length === 0 && <EmptyState text="Nada programado aún" />}
+                                </div>
+                                <h3 className="font-bold text-gray-800 text-sm mb-2 leading-snug group-hover:text-indigo-700 transition-colors">{item.generatedDraft.hook}</h3>
+                                <p className="text-xs text-gray-500 line-clamp-2 mb-3 leading-relaxed">{item.generatedDraft.body}</p>
+                                <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-50">
+                                    <span className="text-[10px] text-gray-400">Hace 2h</span>
+                                    <div className="w-16 h-1 bg-gray-100 rounded-full overflow-hidden">
+                                        <div className="h-full bg-blue-500 w-3/4 rounded-full"></div>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
+                        ))}
+                        {drafts.length === 0 && <EmptyState text="No hay borradores activos" />}
+                    </div>
+                </div>
 
+                {/* COLUMN 3: READY */}
+                <div
+                    className="flex flex-col gap-6 bg-gray-50/50 rounded-[32px] p-6 border border-gray-100/50 transition-colors h-full min-h-[500px]"
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={(e) => handleDropOnSection('approved', e)}
+                >
+                    <SectionHeader
+                        icon={CheckCircle}
+                        title="Listos para Publicar"
+                        count={ready.length}
+                        colorClass="bg-green-100"
+                        iconColorClass="text-green-600"
+                    />
+                    <div className="space-y-4">
+                        {ready.map(item => (
+                            <div
+                                key={item.id}
+                                draggable
+                                onDragStart={() => handleDragStart(item, 'approved')}
+                                className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm opacity-90 hover:opacity-100 transition-all cursor-move group relative"
+                            >
+                                <div className="flex items-center justify-between mb-3">
+                                    <div className="flex items-center gap-2">
+                                        <div className="p-1 bg-green-100 rounded-full text-green-600"><CheckCircle size={12} /></div>
+                                        <span className="text-[10px] font-bold text-gray-400 uppercase">Programado</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[10px] font-bold text-gray-400">Mañana, 09:00</span>
+                                        <button onClick={(e) => { e.stopPropagation(); onDeletePost(item.id); }} className="text-gray-300 hover:text-red-500 transition-colors">
+                                            <Trash2 size={14} />
+                                        </button>
+                                    </div>
+                                </div>
+                                <h3 className="font-medium text-gray-800 text-sm leading-snug mb-3">{item.generatedDraft.hook}</h3>
+                                <button
+                                    onClick={() => setPreviewPost(item)}
+                                    className="w-full py-2 text-xs font-bold text-gray-500 bg-gray-50 rounded-lg hover:bg-gray-100 hover:text-indigo-600 transition-colors flex items-center justify-center gap-2"
+                                >
+                                    Ver Preview
+                                </button>
+                            </div>
+                        ))}
+                        {ready.length === 0 && <EmptyState text="Nada programado aún" />}
                     </div>
                 </div>
 
             </div>
+
+            {previewPost && (
+                <LinkedInPreview
+                    post={previewPost}
+                    isOpen={!!previewPost}
+                    onClose={() => setPreviewPost(null)}
+                />
+            )}
         </div>
     );
 };
