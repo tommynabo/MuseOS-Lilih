@@ -142,6 +142,53 @@ export const regeneratePost = async (outline: string, originalContent: string, c
     return response.choices[0].message.content;
 };
 
+export const generateViralityAnalysis = async (postContent: string, originalMetrics?: { likes: number; comments: number }) => {
+    const prompt = `
+    Eres un experto en análisis de viralidad de contenido en LinkedIn. Analiza este post profesionalmente.
+    
+    CONTENIDO:
+    "${postContent}"
+    
+    MÉTRICAS ORIGINALES (si las hay): ${originalMetrics ? `${originalMetrics.likes} likes, ${originalMetrics.comments} comentarios` : 'No disponibles'}
+    
+    Proporciona un análisis profesional en JSON con EXACTAMENTE estos campos (sin símbolos ### ni markdown):
+    {
+      "viralityReason": "string - Explicación concisa de por qué este post podría volverse viral (máximo 150 caracteres)",
+      "bottleneck": "string - Qué limita el alcance de este post (máximo 150 caracteres)",
+      "engagement_trigger": "string - Qué elemento específico genera comentarios/shares (máximo 150 caracteres)",
+      "audience_relevance": "string - A qué audiencia le importa más este contenido (máximo 150 caracteres)"
+    }
+    
+    IMPORTANTE:
+    - No incluyas markdown
+    - No uses ## ni # para títulos
+    - Sé específico y profesional
+    - Mantén cada campo bajo 150 caracteres
+    `;
+
+    try {
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [
+                { role: "system", content: "Eres un experto en metrics de redes sociales y análisis de contenido viral. Responde SIEMPRE en JSON válido, sin markdown." },
+                { role: "user", content: prompt }
+            ],
+            response_format: { type: "json_object" }
+        });
+        
+        const result = JSON.parse(response.choices[0].message.content || '{}');
+        return result;
+    } catch (error) {
+        console.error("Virality analysis error:", error);
+        return {
+            viralityReason: "Análisis no disponible",
+            bottleneck: "Análisis no disponible",
+            engagement_trigger: "Análisis no disponible",
+            audience_relevance: "Análisis no disponible"
+        };
+    }
+};
+
 export const generateIdeasFromResearch = async (postContent: string, researchData: any) => {
     const prompt = `
     SOURCE_POST: ${postContent}

@@ -86,19 +86,19 @@ const Editor: React.FC<EditorProps> = ({ content, clientProfile, onClose, onSave
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden">
+      {/* Main Content - NEW LAYOUT: 70% Left (Source), 30% Right (Editor) */}
+      <div className="flex-1 flex overflow-hidden"
 
-        {/* Left: Context / Source Material */}
-        <div className="w-[400px] hidden lg:flex flex-col border-r border-gray-200 bg-gradient-to-b from-white to-gray-50 h-full overflow-y-auto custom-scrollbar">
-          <div className="p-6 space-y-6">
+        {/* Left: Context / Source Material - 70% EXPANDED */}
+        <div className="w-7/12 flex flex-col border-r border-gray-200 bg-gradient-to-b from-white to-gray-50 h-full overflow-y-auto custom-scrollbar">
+          <div className="p-8 space-y-6">
             {/* Header */}
             <div>
-              <h3 className="font-bold text-gray-900 text-sm mb-1 flex items-center gap-2">
-                <BookOpen size={16} className="text-indigo-600" />
+              <h3 className="font-bold text-gray-900 text-lg mb-1 flex items-center gap-2">
+                <BookOpen size={18} className="text-indigo-600" />
                 Fuente Original
               </h3>
-              <p className="text-[10px] text-gray-400 ml-6">Contenido de inspiración</p>
+              <p className="text-[10px] text-gray-400 ml-8">Contenido de inspiración - Scroll para leer completo</p>
             </div>
 
             {/* Link Button - Prominently Displayed */}
@@ -107,62 +107,63 @@ const Editor: React.FC<EditorProps> = ({ content, clientProfile, onClose, onSave
                 href={content.originalUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center justify-between w-full p-3.5 bg-gradient-to-r from-indigo-500 to-indigo-600 text-white rounded-xl hover:shadow-lg hover:shadow-indigo-200 transition-all border border-indigo-400 group"
+                className="flex items-center justify-between w-full p-4 bg-gradient-to-r from-indigo-500 to-indigo-600 text-white rounded-xl hover:shadow-lg hover:shadow-indigo-200 transition-all border border-indigo-400 group"
               >
-                <span className="flex items-center gap-2 font-bold text-sm">
-                  <ExternalLink size={16} />
-                  Ver Post Original
+                <span className="flex items-center gap-2 font-bold text-base">
+                  <ExternalLink size={18} />
+                  Ver Post Original en LinkedIn
                 </span>
-                <span className="text-xs font-medium opacity-90">↗</span>
+                <span className="text-sm font-medium opacity-90">↗</span>
               </a>
             )}
 
-            {/* Original Text - Full Content */}
+            {/* Original Text - FULL SIZE, NO TRUNCATION */}
             <div className="space-y-3">
-              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Texto Original</label>
-              <div className="bg-white border-2 border-gray-200 rounded-2xl p-5 relative group">
+              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Texto Original Completo</label>
+              <div className="bg-white border-2 border-gray-200 rounded-2xl p-6 relative group min-h-96 max-h-96 overflow-y-auto">
                 {/* Quote Mark Decoration */}
-                <div className="absolute top-2 left-3 text-gray-200 text-3xl opacity-50 font-serif">"</div>
+                <div className="absolute top-3 left-4 text-gray-200 text-5xl opacity-40 font-serif">"</div>
                 
-                {/* Actual Text - No Truncation */}
-                <p className="text-gray-700 text-sm leading-relaxed font-medium whitespace-pre-wrap pl-2 relative z-10 max-h-52 overflow-y-auto">
+                {/* Actual Text - NO TRUNCATION, FULL READABLE */}
+                <p className="text-gray-800 text-base leading-relaxed font-normal whitespace-pre-wrap pl-4 relative z-10">
                   {content.originalText}
                 </p>
                 
                 {/* Copy Button */}
                 <button
                   onClick={copyToClipboard}
-                  className="absolute top-3 right-3 p-1.5 bg-gray-100 text-gray-400 hover:bg-indigo-100 hover:text-indigo-600 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                  className="absolute top-4 right-4 p-2 bg-gray-100 text-gray-400 hover:bg-indigo-100 hover:text-indigo-600 rounded-lg transition-all opacity-0 group-hover:opacity-100"
                   title="Copiar texto"
                 >
-                  <Copy size={14} />
+                  <Copy size={16} />
                 </button>
               </div>
+              <p className="text-xs text-gray-400 italic">El texto completo aparece arriba. Usa scroll dentro del cuadro si es muy largo.</p>
             </div>
 
             {/* Author */}
             {content.originalAuthor && (
-              <div className="bg-blue-50 rounded-xl p-3.5 border border-blue-100">
+              <div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
                 <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-1">Por</p>
-                <p className="text-sm font-bold text-gray-900">{content.originalAuthor}</p>
+                <p className="text-base font-bold text-gray-900">{content.originalAuthor}</p>
               </div>
             )}
 
             {/* Metrics - if available */}
             {content.viralMetrics && (
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Métricas de Viralidad</label>
-                <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-3">
+                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Métricas de Viralidad del Original</label>
+                <div className="grid grid-cols-2 gap-3">
                   {content.viralMetrics.likes > 0 && (
-                    <div className="bg-red-50 rounded-lg p-3 border border-red-100">
+                    <div className="bg-red-50 rounded-lg p-4 border border-red-100">
                       <p className="text-[10px] text-red-600 font-bold uppercase">Likes</p>
-                      <p className="text-lg font-bold text-red-700">{content.viralMetrics.likes.toLocaleString()}</p>
+                      <p className="text-2xl font-bold text-red-700">{content.viralMetrics.likes.toLocaleString()}</p>
                     </div>
                   )}
                   {content.viralMetrics.comments > 0 && (
-                    <div className="bg-green-50 rounded-lg p-3 border border-green-100">
+                    <div className="bg-green-50 rounded-lg p-4 border border-green-100">
                       <p className="text-[10px] text-green-600 font-bold uppercase">Comentarios</p>
-                      <p className="text-lg font-bold text-green-700">{content.viralMetrics.comments.toLocaleString()}</p>
+                      <p className="text-2xl font-bold text-green-700">{content.viralMetrics.comments.toLocaleString()}</p>
                     </div>
                   )}
                 </div>
@@ -172,10 +173,10 @@ const Editor: React.FC<EditorProps> = ({ content, clientProfile, onClose, onSave
             {/* Research Notes - Improved */}
             {content.generatedDraft.researchNotes.length > 0 && (
               <div className="space-y-3">
-                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Análisis de IA</label>
+                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Notas de Análisis</label>
                 <div className="space-y-2">
                   {content.generatedDraft.researchNotes.map((note, idx) => (
-                    <div key={idx} className="flex gap-3 text-xs text-gray-700 bg-yellow-50 p-3 rounded-lg border border-yellow-100">
+                    <div key={idx} className="flex gap-3 text-sm text-gray-700 bg-yellow-50 p-3 rounded-lg border border-yellow-100">
                       <span className="text-yellow-600 font-bold flex-shrink-0 mt-0.5">➜</span>
                       <span className="leading-relaxed">{note}</span>
                     </div>
@@ -184,53 +185,54 @@ const Editor: React.FC<EditorProps> = ({ content, clientProfile, onClose, onSave
               </div>
             )}
 
-            {/* Virality Analysis - Professional */}
+            {/* Virality Analysis - Professional - MOVED TO LEFT PANEL */}
             {content.generatedDraft.viralityAnalysis && (
-              <div className="space-y-3">
-                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Análisis de Viralidad Profesional</label>
+              <div className="space-y-3 pt-4 border-t border-gray-200">
+                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Análisis Profesional de Viralidad</label>
                 <div className="space-y-3">
                   {/* Virality Reason */}
                   <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg p-4 border border-amber-200">
-                    <div className="flex gap-2 items-start mb-1">
+                    <div className="flex gap-2 items-start mb-2">
                       <Zap size={14} className="text-amber-600 flex-shrink-0 mt-0.5" />
                       <p className="text-[11px] font-bold text-amber-800 uppercase tracking-wider">Por qué será viral</p>
                     </div>
-                    <p className="text-sm text-gray-800 leading-relaxed ml-6">{content.generatedDraft.viralityAnalysis.viralityReason}</p>
+                    <p className="text-sm text-gray-800 leading-relaxed">{content.generatedDraft.viralityAnalysis.viralityReason}</p>
                   </div>
 
                   {/* Bottleneck */}
                   <div className="bg-gradient-to-r from-red-50 to-rose-50 rounded-lg p-4 border border-red-200">
-                    <div className="flex gap-2 items-start mb-1">
+                    <div className="flex gap-2 items-start mb-2">
                       <AlertCircle size={14} className="text-red-600 flex-shrink-0 mt-0.5" />
                       <p className="text-[11px] font-bold text-red-800 uppercase tracking-wider">Cuello de botella</p>
                     </div>
-                    <p className="text-sm text-gray-800 leading-relaxed ml-6">{content.generatedDraft.viralityAnalysis.bottleneck}</p>
+                    <p className="text-sm text-gray-800 leading-relaxed">{content.generatedDraft.viralityAnalysis.bottleneck}</p>
                   </div>
 
                   {/* Engagement Trigger */}
                   <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg p-4 border border-green-200">
-                    <div className="flex gap-2 items-start mb-1">
+                    <div className="flex gap-2 items-start mb-2">
                       <Sparkles size={14} className="text-green-600 flex-shrink-0 mt-0.5" />
                       <p className="text-[11px] font-bold text-green-800 uppercase tracking-wider">Trigger de engagement</p>
                     </div>
-                    <p className="text-sm text-gray-800 leading-relaxed ml-6">{content.generatedDraft.viralityAnalysis.engagement_trigger}</p>
+                    <p className="text-sm text-gray-800 leading-relaxed">{content.generatedDraft.viralityAnalysis.engagement_trigger}</p>
                   </div>
 
                   {/* Audience Relevance */}
                   <div className="bg-gradient-to-r from-blue-50 to-cyan-50 rounded-lg p-4 border border-blue-200">
-                    <div className="flex gap-2 items-start mb-1">
+                    <div className="flex gap-2 items-start mb-2">
                       <Users size={14} className="text-blue-600 flex-shrink-0 mt-0.5" />
                       <p className="text-[11px] font-bold text-blue-800 uppercase tracking-wider">Relevancia de audiencia</p>
                     </div>
-                    <p className="text-sm text-gray-800 leading-relaxed ml-6">{content.generatedDraft.viralityAnalysis.audience_relevance}</p>
+                    <p className="text-sm text-gray-800 leading-relaxed">{content.generatedDraft.viralityAnalysis.audience_relevance}</p>
                   </div>
                 </div>
               </div>
             )}
+
           </div>
         </div>
 
-        {/* Right: Working Area */}
+        {/* Right: Working Area - 30% COMPACT */}
         <div className="flex-1 flex flex-col bg-[#f8f9fc] relative">
 
           {/* AI Tools */}

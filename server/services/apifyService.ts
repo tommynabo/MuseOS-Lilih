@@ -8,9 +8,10 @@ const client = new ApifyClient({
 
 export const searchLinkedInPosts = async (keywords: string[], maxPosts = 5) => {
     // Actor: buIWk2uOUzTmcLsuB (LinkedIn Post Search)
+    // Enhanced search to find HIGH QUALITY posts (>100 likes)
     const input = {
-        maxPosts: maxPosts,
-        maxReactions: 5,
+        maxPosts: maxPosts * 3, // Fetch 3x more to filter by engagement
+        maxReactions: 10,
         scrapeComments: true,
         scrapeReactions: true,
         searchQueries: keywords,
@@ -20,7 +21,23 @@ export const searchLinkedInPosts = async (keywords: string[], maxPosts = 5) => {
     try {
         const run = await client.actor("buIWk2uOUzTmcLsuB").call(input);
         const { items } = await client.dataset(run.defaultDatasetId).listItems();
-        return items;
+        
+        // Filter by engagement: Must have >100 likes OR >20 comments
+        const qualityPosts = items
+            .filter((item: any) => {
+                const likes = item.likesCount || item.likesNumber || 0;
+                const comments = item.commentsCount || item.commentsNumber || 0;
+                return likes > 100 || comments > 20;
+            })
+            .sort((a: any, b: any) => {
+                const scoreA = (a.likesCount || 0) + (a.commentsCount || 0) * 3;
+                const scoreB = (b.likesCount || 0) + (b.commentsCount || 0) * 3;
+                return scoreB - scoreA;
+            })
+            .slice(0, maxPosts);
+        
+        console.log(`Found ${items.length} posts, filtered ${qualityPosts.length} high-engagement posts`);
+        return qualityPosts;
     } catch (error) {
         console.error("Apify Search Error:", error);
         return [];
@@ -29,14 +46,14 @@ export const searchLinkedInPosts = async (keywords: string[], maxPosts = 5) => {
 
 export const getCreatorPosts = async (profileUrls: string[], maxPosts = 3) => {
     // Actor: A3cAPGpwBEG8RJwse (LinkedIn Profile Scraper / Post Scraper) 
-    // Note: The N8N used this actor for profile posts too.
+    // Fetch posts from high-engagement creators only
     const input = {
         includeQuotePosts: true,
-        includeReposts: true,
-        maxComments: 5,
-        maxPosts: maxPosts,
-        maxReactions: 5,
-        postedLimit: "week",
+        includeReposts: false, // Don't include reposts to get original content
+        maxComments: 10,
+        maxPosts: maxPosts * 2, // Fetch 2x more to filter
+        maxReactions: 10,
+        postedLimit: "month", // Extended to 1 month for more data
         scrapeComments: true,
         scrapeReactions: true,
         targetUrls: profileUrls
@@ -45,7 +62,23 @@ export const getCreatorPosts = async (profileUrls: string[], maxPosts = 3) => {
     try {
         const run = await client.actor("A3cAPGpwBEG8RJwse").call(input);
         const { items } = await client.dataset(run.defaultDatasetId).listItems();
-        return items;
+        
+        // Filter by engagement: >50 likes OR >10 comments (lower threshold for creator posts)
+        const qualityPosts = items
+            .filter((item: any) => {
+                const likes = item.likesCount || item.likesNumber || 0;
+                const comments = item.commentsCount || item.commentsNumber || 0;
+                return likes > 50 || comments > 10;
+            })
+            .sort((a: any, b: any) => {
+                const scoreA = (a.likesCount || 0) + (a.commentsCount || 0) * 3;
+                const scoreB = (b.likesCount || 0) + (b.commentsCount || 0) * 3;
+                return scoreB - scoreA;
+            })
+            .slice(0, maxPosts);
+        
+        console.log(`Creator posts: filtered ${items.length} to ${qualityPosts.length} high-engagement posts`);
+        return qualityPosts;
     } catch (error) {
         console.error("Apify Creator Posts Error:", error);
         return [];
