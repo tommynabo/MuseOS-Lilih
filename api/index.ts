@@ -49,41 +49,47 @@ const getUserSupabase = (req: Request) => getSupabaseUserClient((req as any).tok
 
 // ===== INTERFACES =====
 interface ApifyPost {
+    [key: string]: any; // Allow any field from Apify — actors vary widely
     id?: string;
     url?: string;
-    postUrl?: string; // Some actors return this
+    postUrl?: string;
     text?: string;
     postText?: string;
     content?: string;
     description?: string;
+    body?: string;
     author?: { name?: string };
+    // All known engagement field variants across Apify actors
     likesCount?: number;
     commentsCount?: number;
     sharesCount?: number;
     likesNumber?: number;
     commentsNumber?: number;
     sharesNumber?: number;
+    numLikes?: number;
+    numComments?: number;
+    numShares?: number;
+    reactionCount?: number;
+    commentCount?: number;
+    shareCount?: number;
+    totalReactionCount?: number;
 }
 
 // ===== HELPER FUNCTIONS =====
 function extractPostText(post: ApifyPost): string {
-    return (
-        post.text ||
-        post.postText ||
-        post.content ||
-        post.description ||
-        ''
-    ).trim().substring(0, 1500); // Increased limit slightly to capture more context
+    const raw = post.text ?? post.postText ?? post.content ?? post.body ?? post.description ?? '';
+    const text = (typeof raw === 'string' ? raw : String(raw)).trim().substring(0, 1500);
+    return text;
 }
 
 function getMetric(post: ApifyPost, metric: 'likes' | 'comments' | 'shares'): number {
     switch (metric) {
         case 'likes':
-            return post.likesCount || post.likesNumber || 0;
+            return post.likesCount ?? post.likesNumber ?? post.numLikes ?? post.reactionCount ?? post.totalReactionCount ?? 0;
         case 'comments':
-            return post.commentsCount || post.commentsNumber || 0;
+            return post.commentsCount ?? post.commentsNumber ?? post.numComments ?? post.commentCount ?? 0;
         case 'shares':
-            return post.sharesCount || post.sharesNumber || 0;
+            return post.sharesCount ?? post.sharesNumber ?? post.numShares ?? post.shareCount ?? 0;
     }
 }
 
@@ -333,14 +339,18 @@ async function executeWorkflowGenerate(req: Request, res: Response) {
         const customInstructions = profile.custom_instructions || '';
         let allPosts: ApifyPost[] = [];
 
+        console.log('[WORKFLOW] Starting. Source:', source, 'Count:', count, 'Keywords:', keywords);
+
         // 1. FETCH
         if (source === 'keywords') {
             if (keywords.length === 0) return res.status(400).json({ error: "No keywords." });
-            const activeKeywords = keywords.slice(0, 2); // Top 2
+            const activeKeywords = keywords.slice(0, 2);
+            console.log('[WORKFLOW] Active keywords:', activeKeywords);
             const expandedLists = await Promise.all(activeKeywords.map((k: string) => expandSearchQuery(k)));
-            // Fallback: make sure we have at least the original keyword if expansion returned nothing useful
+            console.log('[WORKFLOW] Expanded queries:', expandedLists);
             const rawQueries = [...new Set([...activeKeywords, ...expandedLists.flat()])];
             const searchQueries = rawQueries.filter(q => typeof q === 'string' && q.trim().length > 0).slice(0, 3);
+            console.log('[WORKFLOW] Final search queries:', searchQueries);
 
             const results = await Promise.all(searchQueries.map(q => searchLinkedInPosts([q], 2)));
             allPosts = results.flat();
@@ -356,40 +366,61 @@ async function executeWorkflowGenerate(req: Request, res: Response) {
             allPosts = await getCreatorPosts(urls, 5);
         }
 
+        console.log('[WORKFLOW] Total posts fetched:', allPosts.length);
+        // Log first post's raw keys to diagnose field name mismatches
+        if (allPosts.length > 0) {
+            const sample = allPosts[0];
+            console.log('[WORKFLOW] Sample post keys:', Object.keys(sample));
+            console.log('[WORKFLOW] Sample post text fields:', { text: sample.text?.substring(0, 50), postText: sample.postText?.substring(0, 50), content: sample.content?.substring(0, 50), body: sample.body?.substring(0, 50) });
+            console.log('[WORKFLOW] Sample post metrics:', { likesCount: sample.likesCount, numLikes: sample.numLikes, commentsCount: sample.commentsCount, numComments: sample.numComments, reactionCount: sample.reactionCount, totalReactionCount: sample.totalReactionCount });
+            console.log('[WORKFLOW] extractPostText result:', extractPostText(sample).substring(0, 100));
+            console.log('[WORKFLOW] getMetric likes:', getMetric(sample, 'likes'), 'comments:', getMetric(sample, 'comments'));
+        }
+
         // 2. ANALYZE
         const bestPosts = await evaluatePostEngagement(allPosts);
+        console.log('[WORKFLOW] Best posts after evaluation:', bestPosts.length);
 
         if (bestPosts.length === 0) {
+            console.log('[WORKFLOW] No posts survived evaluation! Returning empty.');
             return res.json({ status: 'success', data: [], message: "No suitable posts found. Try different keywords." });
         }
 
         // 3. GENERATE
         const postsToProcess = bestPosts.slice(0, count);
-        const generatedResults = await Promise.all(postsToProcess.map(async (post) => {
+        console.log('[WORKFLOW] Processing', postsToProcess.length, 'posts');
+        const generatedResults = await Promise.all(postsToProcess.map(async (post, idx) => {
             const postText = extractPostText(post);
+            console.log(`[WORKFLOW] Post ${idx}: text length=${postText.length}`);
             if (!postText) return null;
 
             const filtered = filterSensitiveData(postText);
             const structure = await extractPostStructure(filtered);
+            console.log(`[WORKFLOW] Post ${idx}: structure extracted`);
             const rewritten = await regeneratePost(structure, filtered, customInstructions);
+            console.log(`[WORKFLOW] Post ${idx}: rewritten (${rewritten.length} chars)`);
 
-            await supabase.from('posts').insert({
+            const postUrl = post.url || post.postUrl || '';
+            const insertResult = await supabase.from('posts').insert({
                 user_id: user.id,
                 original_content: postText,
                 generated_content: rewritten,
                 type: source === 'keywords' ? 'research' : 'parasite',
                 status: 'idea',
-                meta: { structure, original_url: post.url, engagement: { likes: getMetric(post, 'likes'), comments: getMetric(post, 'comments') } }
+                meta: { structure, original_url: postUrl, engagement: { likes: getMetric(post, 'likes'), comments: getMetric(post, 'comments') } }
             });
+            if (insertResult.error) console.error(`[WORKFLOW] Post ${idx}: DB insert error:`, insertResult.error);
+            else console.log(`[WORKFLOW] Post ${idx}: saved to DB`);
 
-            return { original: postText.substring(0, 100) + '...', generated: rewritten, sourceUrl: post.url };
+            return { original: postText.substring(0, 100) + '...', generated: rewritten, sourceUrl: postUrl };
         }));
 
         const validResults = generatedResults.filter(Boolean);
+        console.log('[WORKFLOW] Done!', validResults.length, 'posts generated successfully');
         res.json({ status: 'success', data: validResults, message: `${validResults.length} posts generated` });
 
     } catch (error: any) {
-        console.error("Workflow error:", error);
+        console.error("[WORKFLOW] FATAL ERROR:", error);
         res.status(500).json({ error: error.message });
     }
 }
