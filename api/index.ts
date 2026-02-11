@@ -218,32 +218,142 @@ async function evaluatePostEngagement(posts: ApifyPost[]): Promise<ApifyPost[]> 
     }
 }
 
-// 3. STRUCTURE EXTRACTION
+// 3. DEEP STRUCTURAL ANALYSIS (The Architect)
 async function extractPostStructure(content: string): Promise<string> {
     if (!openai) return '{}';
     try {
         const response = await openai.chat.completions.create({
             model: "gpt-4o",
-            messages: [{ role: "system", content: "Extract viral structure JSON." }, { role: "user", content: content }],
-            response_format: { type: "json_object" }
+            messages: [
+                {
+                    role: "system",
+                    content: `Eres un analista experto en viralidad de LinkedIn con 15 años de experiencia estudiando qué hace que un post explote en engagement. Tu trabajo es hacer un REVERSE ENGINEERING profundo del post proporcionado.
+
+Devuelve un JSON con este análisis exhaustivo:
+
+{
+  "hook": {
+    "type": "pregunta_provocadora | dato_impactante | historia_personal | afirmacion_polemica | contradiccion | confesion",
+    "text": "El hook exacto del post",
+    "effectiveness": 1-10,
+    "why_it_works": "Explicación psicológica de por qué este hook captura atención"
+  },
+  "narrative_arc": {
+    "structure": "problema-solucion | historia-leccion | mito-realidad | lista-valor | antes-despues | confesion-aprendizaje",
+    "phases": ["Fase 1: ...", "Fase 2: ...", "Fase 3: ..."],
+    "turning_point": "El momento exacto donde el post cambia de dirección y captura al lector"
+  },
+  "emotional_triggers": {
+    "primary_emotion": "curiosidad | miedo | aspiracion | indignacion | sorpresa | nostalgia | orgullo",
+    "secondary_emotions": ["..."],
+    "emotional_journey": "Descripción del viaje emocional del lector desde el inicio hasta el final"
+  },
+  "persuasion_techniques": {
+    "techniques_used": [
+      {"name": "Nombre de la técnica", "example": "Línea exacta donde se usa", "impact": "Por qué funciona"}
+    ],
+    "social_proof": "Cómo usa prueba social (si aplica)",
+    "authority_signals": "Señales de autoridad detectadas"
+  },
+  "engagement_mechanics": {
+    "why_people_comment": "La razón principal por la que la gente comenta en este post",
+    "debate_potential": 1-10,
+    "shareability": 1-10,
+    "save_worthy": 1-10,
+    "call_to_action": "CTA detectado (implícito o explícito)"
+  },
+  "structural_blueprint": {
+    "total_lines": "Número aproximado de líneas",
+    "line_length_pattern": "cortas_impactantes | mixtas | largas_narrativas",
+    "use_of_whitespace": "agresivo | moderado | compacto",
+    "formatting": ["emojis", "bullets", "numeros", "mayusculas", "etc"],
+    "rhythm": "Descripción del ritmo del post (rápido/lento, staccato/fluido)"
+  },
+  "virality_score": {
+    "overall": 1-10,
+    "originality": 1-10,
+    "relatability": 1-10,
+    "actionability": 1-10,
+    "controversy": 1-10,
+    "verdict": "Resumen en 1 frase de por qué este post funciona (o no)"
+  },
+  "replication_strategy": "Instrucciones específicas de 3-5 pasos para replicar este estilo en un nuevo tema"
+}`
+                },
+                { role: "user", content: content }
+            ],
+            response_format: { type: "json_object" },
+            temperature: 0.3
         });
         return response.choices[0].message.content || '{}';
-    } catch { return '{}'; }
+    } catch (err) {
+        console.error('[AI] Structure extraction error:', err);
+        return '{}';
+    }
 }
 
-// 4. REWRITE
+// 4. PROFESSIONAL GHOSTWRITER REWRITE (The Creator)
 async function regeneratePost(structure: string, original: string, instructions: string): Promise<string> {
     if (!openai) return original;
+
+    // Parse structure for strategic rewriting
+    let structureObj: any = {};
+    try { structureObj = JSON.parse(structure); } catch { }
+
+    const hookType = structureObj?.hook?.type || 'historia_personal';
+    const narrativeArc = structureObj?.narrative_arc?.structure || 'problema-solucion';
+    const blueprint = structureObj?.structural_blueprint || {};
+    const replicationStrategy = structureObj?.replication_strategy || '';
+
     try {
         const response = await openai.chat.completions.create({
             model: "gpt-4o",
             messages: [
-                { role: "system", content: instructions || "Ghostwriter expert." },
-                { role: "user", content: `Rewrite based on structure: ${structure} \n Context: ${original.substring(0, 500)}` }
-            ]
+                {
+                    role: "system",
+                    content: `Eres un Ghostwriter de élite para LinkedIn con experiencia escribiendo para CEOs, founders y líderes de opinión. Tu contenido genera consistentemente +500 likes y +50 comentarios.
+
+## TU MISIÓN
+Crear un post COMPLETAMENTE NUEVO inspirado en la ESTRUCTURA y PSICOLOGÍA del post original, pero con contenido 100% original y adaptado a la voz del creador.
+
+## REGLAS ABSOLUTAS
+1. NUNCA copies frases del original. Inspírate en la estructura, no en las palabras.
+2. El post debe sentirse auténtico, como si lo escribiera una persona real con experiencia.
+3. Usa el mismo TIPO DE HOOK detectado: "${hookType}"
+4. Sigue el mismo ARCO NARRATIVO: "${narrativeArc}"
+5. Mantén el mismo RITMO: ${blueprint.rhythm || 'mixto'} 
+6. Usa espaciado ${blueprint.use_of_whitespace || 'moderado'} entre líneas
+7. El post debe ser en ESPAÑOL (España/Latinoamérica profesional)
+8. Longitud similar al original (~${blueprint.total_lines || '10-15'} líneas)
+
+## ESTRATEGIA DE REPLICACIÓN
+${replicationStrategy}
+
+## INSTRUCCIONES DEL CREADOR
+${instructions || 'Escribe como un profesional con autoridad pero cercanía. Tono confiado pero humilde.'}
+
+## FORMATO DE SALIDA
+Escribe SOLO el post listo para publicar en LinkedIn. Sin comillas, sin explicaciones, sin "Aquí tienes". Solo el post.`
+                },
+                {
+                    role: "user",
+                    content: `ANÁLISIS ESTRUCTURAL DEL POST ORIGINAL:
+${structure}
+
+CONTENIDO ORIGINAL (referencia, NO copiar):
+${original.substring(0, 800)}
+
+Genera un post NUEVO que replique la PSICOLOGÍA y ESTRUCTURA viral detectada, pero con contenido completamente original y profesional.`
+                }
+            ],
+            temperature: 0.8,
+            max_tokens: 1500
         });
         return response.choices[0].message.content || '';
-    } catch { return original; }
+    } catch (err) {
+        console.error('[AI] Rewrite error:', err);
+        return original;
+    }
 }
 
 
@@ -438,12 +548,17 @@ async function executeWorkflowGenerate(req: Request, res: Response) {
                 try {
                     const filtered = filterSensitiveData(postText);
                     const structure = await extractPostStructure(filtered);
+                    console.log(`[WORKFLOW] ✅ Deep analysis complete for post`);
                     const rewritten = await regeneratePost(structure, filtered, customInstructions);
 
                     if (!rewritten || rewritten.length < 20) {
                         console.log(`[WORKFLOW] Skipping post (rewrite too short: ${rewritten?.length})`);
                         continue;
                     }
+
+                    // Parse deep analysis for rich metadata storage
+                    let analysisObj: any = {};
+                    try { analysisObj = JSON.parse(structure); } catch { }
 
                     const postUrl = post.url || post.postUrl || '';
                     const insertResult = await supabase.from('posts').insert({
@@ -452,16 +567,40 @@ async function executeWorkflowGenerate(req: Request, res: Response) {
                         generated_content: rewritten,
                         type: source === 'keywords' ? 'research' : 'parasite',
                         status: 'idea',
-                        meta: { structure, original_url: postUrl, engagement: { likes: getMetric(post, 'likes'), comments: getMetric(post, 'comments') } }
+                        meta: {
+                            structure: analysisObj,
+                            original_url: postUrl,
+                            engagement: { likes: getMetric(post, 'likes'), comments: getMetric(post, 'comments') },
+                            ai_analysis: {
+                                hook: analysisObj.hook || null,
+                                narrative_arc: analysisObj.narrative_arc || null,
+                                emotional_triggers: analysisObj.emotional_triggers || null,
+                                persuasion_techniques: analysisObj.persuasion_techniques || null,
+                                engagement_mechanics: analysisObj.engagement_mechanics || null,
+                                virality_score: analysisObj.virality_score || null,
+                                structural_blueprint: analysisObj.structural_blueprint || null,
+                                replication_strategy: analysisObj.replication_strategy || null
+                            }
+                        }
                     });
 
                     if (insertResult.error) {
                         console.error(`[WORKFLOW] DB insert error:`, insertResult.error);
-                        continue; // Skip this post, try next
+                        continue;
                     }
 
-                    savedResults.push({ original: postText.substring(0, 100) + '...', generated: rewritten, sourceUrl: postUrl });
-                    console.log(`[WORKFLOW] ✅ Post ${savedResults.length}/${targetCount} saved`);
+                    savedResults.push({
+                        original: postText.substring(0, 100) + '...',
+                        generated: rewritten,
+                        sourceUrl: postUrl,
+                        analysis: {
+                            hook: analysisObj.hook || null,
+                            virality_score: analysisObj.virality_score || null,
+                            narrative_arc: analysisObj.narrative_arc?.structure || null,
+                            emotional_triggers: analysisObj.emotional_triggers || null
+                        }
+                    });
+                    console.log(`[WORKFLOW] ✅ Post ${savedResults.length}/${targetCount} saved with deep analysis`);
                 } catch (postError: any) {
                     console.error(`[WORKFLOW] Error processing single post:`, postError.message);
                     continue; // Don't let one post crash the whole batch
