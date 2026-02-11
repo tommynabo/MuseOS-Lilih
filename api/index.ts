@@ -47,6 +47,7 @@ const getUserSupabase = (req: Request) => getSupabaseUserClient((req as any).tok
 interface ApifyPost {
     id?: string;
     url?: string;
+    postUrl?: string; // Some actors return this
     text?: string;
     postText?: string;
     content?: string;
@@ -68,7 +69,7 @@ function extractPostText(post: ApifyPost): string {
         post.content ||
         post.description ||
         ''
-    ).trim().substring(0, 500);
+    ).trim().substring(0, 1500); // Increased limit slightly to capture more context
 }
 
 function getMetric(post: ApifyPost, metric: 'likes' | 'comments' | 'shares'): number {
@@ -82,11 +83,31 @@ function getMetric(post: ApifyPost, metric: 'likes' | 'comments' | 'shares'): nu
     }
 }
 
+function filterSensitiveData(text: string): string {
+    // Remove phone numbers (various formats)
+    let filtered = text.replace(/(\+?\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{3,4}/g, '[TELÉFONO]');
+    // Remove WhatsApp numbers
+    filtered = filtered.replace(/\(?WhatsApp\)?[\s]?[\d\s\-\(\)]+/gi, '[WHATSAPP]');
+    // Remove email addresses
+    filtered = filtered.replace(/[\w\.-]+@[\w\.-]+\.\w+/g, '[EMAIL]');
+    // Remove URLs
+    filtered = filtered.replace(/https?:\/\/[^\s]+|www\.[^\s]+/gi, '[WEBSITE]');
+    // Remove physical addresses
+    filtered = filtered.replace(/(?:Rua|Avenida|Av\.|Calle|Street|Rua|Rute|nº|Número|Loja|Edifício|Moçambique|Portugal|Brasil|España|México|Argentina)\s+[^\.]*\.?/gi, (match) => {
+        if (/\d/.test(match)) return '[DIRECCIÓN]';
+        return match;
+    });
+    // Remove geographic coordinates
+    filtered = filtered.replace(/📍\s*[^[\n]*/gi, '[UBICACIÓN]');
+    filtered = filtered.replace(/Maputo|Lisboa|Porto|Rio de Janeiro|São Paulo/gi, '[CIUDAD]');
+    return filtered.trim();
+}
+
 // ===== APIFY FUNCTIONS =====
 async function searchLinkedInPosts(keywords: string[], maxPosts = 5): Promise<ApifyPost[]> {
     try {
         const run = await apifyClient.actor("buIWk2uOUzTmcLsuB").call({
-            maxPosts, maxReactions: 5, scrapeComments: true, scrapeReactions: true,
+            maxPosts, maxReactions: 1, scrapeComments: true, scrapeReactions: true,
             searchQueries: keywords, sortBy: "relevance"
         });
         const { items } = await apifyClient.dataset(run.defaultDatasetId).listItems();
@@ -101,7 +122,7 @@ async function getCreatorPosts(profileUrls: string[], maxPosts = 3): Promise<Api
     try {
         const run = await apifyClient.actor("A3cAPGpwBEG8RJwse").call({
             includeQuotePosts: true, includeReposts: true, maxComments: 5, maxPosts,
-            maxReactions: 5, postedLimit: "week", scrapeComments: true, scrapeReactions: true,
+            maxReactions: 1, postedLimit: "week", scrapeComments: true, scrapeReactions: true,
             targetUrls: profileUrls
         });
         const { items } = await apifyClient.dataset(run.defaultDatasetId).listItems();
@@ -112,7 +133,6 @@ async function getCreatorPosts(profileUrls: string[], maxPosts = 3): Promise<Api
     }
 }
 
-// ===== OPENAI FUNCTIONS =====
 // ===== OPTIMIZED AI FUNCTIONS =====
 
 // 1. QUERY EXPANSION
@@ -133,16 +153,20 @@ async function expandSearchQuery(topic: string): Promise<string[]> {
 async function evaluatePostEngagement(posts: ApifyPost[]): Promise<ApifyPost[]> {
     if (posts.length === 0) return [];
 
-    // Quick pre-filter to save tokens
+    // Low floor to ensure we have candidates
     const meaningfulPosts = posts.filter(p => {
-        const likes = p.likesCount || 0;
-        const comments = p.commentsCount || 0;
-        return likes > 10 || comments > 2; // Relaxed floor
+        const len = extractPostText(p).length;
+        if (len < 50) return false; // Skip empty posts
+        // Relaxed metric floor: even 1 like might be enough if it has comments?
+        // Let's rely on ratio mostly, but ensure at least SOME engagement or it's dead
+        const likes = getMetric(p, 'likes');
+        const comments = getMetric(p, 'comments');
+        return (likes + comments) > 2;
     });
 
-    if (meaningfulPosts.length === 0) return posts.slice(0, 3);
+    if (meaningfulPosts.length === 0) return posts.slice(0, 3); // Fallback to raw if logic filtered all
 
-    const postsData = meaningfulPosts.slice(0, 15).map((p, idx) => ({ // Limit analysis to 15 posts max
+    const postsData = meaningfulPosts.slice(0, 15).map((p, idx) => ({
         index: idx,
         text: extractPostText(p).substring(0, 200),
         metrics: {
@@ -190,26 +214,6 @@ async function extractPostStructure(content: string): Promise<string> {
     } catch { return '{}'; }
 }
 
-function filterSensitiveData(text: string): string {
-    // Remove phone numbers (various formats)
-    let filtered = text.replace(/(\+?\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{3,4}/g, '[TELÉFONO]');
-    // Remove WhatsApp numbers
-    filtered = filtered.replace(/\(?WhatsApp\)?[\s]?[\d\s\-\(\)]+/gi, '[WHATSAPP]');
-    // Remove email addresses
-    filtered = filtered.replace(/[\w\.-]+@[\w\.-]+\.\w+/g, '[EMAIL]');
-    // Remove URLs (www.*, http://*, https://)
-    filtered = filtered.replace(/https?:\/\/[^\s]+|www\.[^\s]+/gi, '[WEBSITE]');
-    // Remove physical addresses
-    filtered = filtered.replace(/(?:Rua|Avenida|Av\.|Calle|Street|Rua|Rute|nº|Número|Loja|Edifício|Moçambique|Portugal|Brasil|España|México|Argentina)\s+[^\.]*\.?/gi, (match) => {
-        if (/\d/.test(match)) return '[DIRECCIÓN]';
-        return match;
-    });
-    // Remove geographic coordinates
-    filtered = filtered.replace(/📍\s*[^[\n]*/gi, '[UBICACIÓN]');
-    filtered = filtered.replace(/Maputo|Lisboa|Porto|Rio de Janeiro|São Paulo/gi, '[CIUDAD]');
-    return filtered.trim();
-}
-
 // 4. REWRITE
 async function regeneratePost(structure: string, original: string, instructions: string): Promise<string> {
     try {
@@ -224,12 +228,84 @@ async function regeneratePost(structure: string, original: string, instructions:
     } catch { return original; }
 }
 
-// ===== MAIN WORKFLOW (OPTIMIZED) =====
-app.post('/api/workflow/generate', requireAuth, async (req, res) => {
-    // Set timeout to handle long Vercel functions (though response must be sent before hard limit)
-    req.setTimeout(60000);
 
-    const { source, count = 1 } = req.body; // Default to 1 to be safe
+// ===== ROUTER =====
+const router = express.Router();
+
+router.get('/health', (_, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
+
+router.get('/creators', requireAuth, async (req, res) => {
+    const supabase = getUserSupabase(req);
+    const { data, error } = await supabase.from('creators').select('*');
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+});
+
+router.post('/creators', requireAuth, async (req, res) => {
+    const { name, linkedinUrl, headline } = req.body;
+    const supabase = getUserSupabase(req);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return res.status(401).json({ error: "Unauthorized" });
+
+    const { data, error } = await supabase.from('creators')
+        .insert({ user_id: user.id, name, linkedin_url: linkedinUrl, headline })
+        .select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+});
+
+router.delete('/creators/:id', requireAuth, async (req, res) => {
+    const { id } = req.params;
+    const supabase = getUserSupabase(req);
+    const { error } = await supabase.from('creators').delete().eq('id', id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ status: 'deleted' });
+});
+
+router.get('/posts', requireAuth, async (req, res) => {
+    const supabase = getUserSupabase(req);
+    const { data, error } = await supabase.from('posts').select('*').order('created_at', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+});
+
+router.patch('/posts/:id', requireAuth, async (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
+    const supabase = getUserSupabase(req);
+    const { data, error } = await supabase.from('posts').update({ status }).eq('id', id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+});
+
+router.delete('/posts/:id', requireAuth, async (req, res) => {
+    const { id } = req.params;
+    const supabase = getUserSupabase(req);
+    const { error } = await supabase.from('posts').delete().eq('id', id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ message: "Post deleted successfully" });
+});
+
+router.post('/rewrite', requireAuth, async (req, res) => {
+    const { text, profile, instruction } = req.body;
+    if (!text) return res.status(400).json({ error: "Text is required" });
+
+    // ... logic for rewrite ...
+    // Simplified inline rewrite logic to avoid huge file size
+    const tone = profile?.custom_instructions || "profesional";
+    const prompt = `Reescribe: ${text} \n Instrucción: ${instruction} \n Tono: ${tone}`;
+
+    try {
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o", messages: [{ role: "user", content: prompt }]
+        });
+        res.json({ result: response.choices[0].message.content });
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
+router.post('/workflow/generate', requireAuth, async (req, res) => {
+    req.setTimeout(60000); // 60s timeout
+    const { source, count = 1 } = req.body;
     const supabase = getUserSupabase(req);
     const { data: { user } } = await supabase.auth.getUser();
 
@@ -237,28 +313,22 @@ app.post('/api/workflow/generate', requireAuth, async (req, res) => {
 
     try {
         const { data: profile } = await supabase.from('profiles').select('*').single();
-        if (!profile) return res.status(400).json({ error: "Configure settings first." });
+        if (!profile) return res.status(400).json({ error: "Config needed." });
 
         const keywords = profile.niche_keywords || [];
         const customInstructions = profile.custom_instructions || '';
         let allPosts: ApifyPost[] = [];
 
-        // 1. FETCH & EXPAND (Parallelized)
+        // 1. FETCH
         if (source === 'keywords') {
             if (keywords.length === 0) return res.status(400).json({ error: "No keywords." });
-
-            // Limit to top 2 keywords for speed
-            const activeKeywords = keywords.slice(0, 2);
-
-            // Expand in parallel
+            const activeKeywords = keywords.slice(0, 2); // Top 2
             const expandedLists = await Promise.all(activeKeywords.map((k: string) => expandSearchQuery(k)));
-            const searchQueries = [...new Set(expandedLists.flat())].slice(0, 3); // Max 3 final queries
+            // Fallback: make sure we have at least the original keyword if expansion returned nothing useful
+            const searchQueries = [...new Set([...activeKeywords, ...expandedLists.flat()])].slice(0, 3);
 
-            // Search in parallel
-            const searchPromises = searchQueries.map(q => searchLinkedInPosts([q], 2));
-            const results = await Promise.all(searchPromises);
+            const results = await Promise.all(searchQueries.map(q => searchLinkedInPosts([q], 2)));
             allPosts = results.flat();
-
         } else {
             const { data: creators } = await supabase.from('creators').select('linkedin_url');
             if (!creators?.length) return res.status(400).json({ error: "No creators." });
@@ -266,25 +336,24 @@ app.post('/api/workflow/generate', requireAuth, async (req, res) => {
             allPosts = await getCreatorPosts(urls, 5);
         }
 
-        // 2. ANALYZE (The Sniffer)
+        // 2. ANALYZE
         const bestPosts = await evaluatePostEngagement(allPosts);
 
-        // 3. GENERATE (The Architect + Writer) - Process Top N in Parallel
-        // Only process requested count to save time
-        const postsToProcess = bestPosts.slice(0, count);
+        if (bestPosts.length === 0) {
+            return res.json({ status: 'success', data: [], message: "No suitable posts found. Try different keywords." });
+        }
 
+        // 3. GENERATE
+        const postsToProcess = bestPosts.slice(0, count);
         const generatedResults = await Promise.all(postsToProcess.map(async (post) => {
             const postText = extractPostText(post);
             if (!postText) return null;
 
             const filtered = filterSensitiveData(postText);
-
-            // Run structure extraction and rewriting
             const structure = await extractPostStructure(filtered);
             const rewritten = await regeneratePost(structure, filtered, customInstructions);
 
-            // Save to DB (Fire and forget provided we catch errors)
-            const { error } = await supabase.from('posts').insert({
+            await supabase.from('posts').insert({
                 user_id: user.id,
                 original_content: postText,
                 generated_content: rewritten,
@@ -293,22 +362,11 @@ app.post('/api/workflow/generate', requireAuth, async (req, res) => {
                 meta: { structure, original_url: post.url, engagement: { likes: getMetric(post, 'likes'), comments: getMetric(post, 'comments') } }
             });
 
-            if (error) console.error("DB Insert Error", error);
-
-            return {
-                original: postText.substring(0, 200) + '...',
-                generated: rewritten,
-                sourceUrl: post.url
-            };
+            return { original: postText.substring(0, 100) + '...', generated: rewritten, sourceUrl: post.url };
         }));
 
         const validResults = generatedResults.filter(Boolean);
-
-        res.json({
-            status: 'success',
-            data: validResults,
-            message: `${validResults.length} posts generated`
-        });
+        res.json({ status: 'success', data: validResults, message: `${validResults.length} posts generated` });
 
     } catch (error: any) {
         console.error("Workflow error:", error);
@@ -316,15 +374,46 @@ app.post('/api/workflow/generate', requireAuth, async (req, res) => {
     }
 });
 
-// Legacy endpoints
-app.post('/api/workflow/parasite', requireAuth, async (req, res) => {
+// Legacy support - just redirect to /generate with the right source
+router.post('/workflow/parasite', requireAuth, async (req, res) => {
     req.body.source = 'creators';
-    return app._router.handle(req, res, () => { });
+    req.body.count = req.body.count || 1;
+    // Call the generate endpoint logic directly
+    req.url = '/workflow/generate';
+    req.path = '/workflow/generate';
+    // Re-route to generate
+    const generateRoute = router.stack.find(layer =>
+        layer.route && layer.route.path === '/workflow/generate'
+    );
+    if (generateRoute && generateRoute.route) {
+        const handler = generateRoute.route.stack[generateRoute.route.stack.length - 1].handle;
+        return handler(req, res);
+    }
+    return res.status(500).json({ error: 'Route not found' });
 });
 
-app.post('/api/workflow/research', requireAuth, async (req, res) => {
+router.post('/workflow/research', requireAuth, async (req, res) => {
     req.body.source = 'keywords';
-    return app._router.handle(req, res, () => { });
+    req.body.count = req.body.count || 1;
+    // Call the generate endpoint logic directly
+    req.url = '/workflow/generate';
+    req.path = '/workflow/generate';
+    // Re-route to generate
+    const generateRoute = router.stack.find(layer =>
+        layer.route && layer.route.path === '/workflow/generate'
+    );
+    if (generateRoute && generateRoute.route) {
+        const handler = generateRoute.route.stack[generateRoute.route.stack.length - 1].handle;
+        return handler(req, res);
+    }
+    return res.status(500).json({ error: 'Route not found' });
 });
 
+
+// ===== MOUNT =====
+// Don't mount on /api because Vercel already routes /api/* to this file
+app.use('/', router);
+
+// ===== VERCEL HANDLER =====
+// Export a Vercel-compatible handler
 export default app;

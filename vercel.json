@@ -1,17 +1,14 @@
 {
     "functions": {
         "api/index.ts": {
-            "includeFiles": "server/**"
+            "memory": 1024,
+            "maxDuration": 60
         }
     },
-    "rewrites": [
+    "routes": [
         {
-            "source": "/api/(.*)",
-            "destination": "/api/index.ts"
-        },
-        {
-            "source": "/(.*)",
-            "destination": "/index.html"
+            "src": "/api/(.*)",
+            "dest": "/api/index.ts"
         }
     ]
 }
