@@ -1,14 +1,14 @@
 {
     "functions": {
-        "api/index.ts": {
+        "api/**/*.ts": {
             "memory": 1024,
             "maxDuration": 60
         }
     },
-    "routes": [
+    "rewrites": [
         {
-            "src": "/api/(.*)",
-            "dest": "/api/index.ts"
+            "source": "/api/:path((?!test).*)",
+            "destination": "/api"
         }
     ]
 }

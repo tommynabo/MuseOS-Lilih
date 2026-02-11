@@ -392,9 +392,9 @@ router.post('/workflow/research', requireAuth, async (req, res) => {
 
 
 // ===== MOUNT =====
-// Don't mount on /api because Vercel already routes /api/* to this file
+// Mount router - Vercel will handle the /api prefix
 app.use('/', router);
 
 // ===== VERCEL HANDLER =====
-// Export a Vercel-compatible handler
+// Vercel automatically wraps Express apps, just export the app
 export default app;
