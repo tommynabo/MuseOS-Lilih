@@ -391,8 +391,8 @@ router.post('/workflow/research', requireAuth, async (req, res) => {
 });
 
 
-// ===== MOUNT =====
-// Mount router - Vercel will handle the /api prefix
+// Mount router on both /api and / to handle Vercel path variations
+app.use('/api', router);
 app.use('/', router);
 
 // ===== VERCEL HANDLER =====
