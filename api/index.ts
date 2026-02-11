@@ -396,5 +396,6 @@ router.post('/workflow/research', requireAuth, async (req, res) => {
 app.use('/', router);
 
 // ===== VERCEL HANDLER =====
-// Vercel automatically wraps Express apps, just export the app
-export default app;
+// CommonJS export for Vercel compatibility
+module.exports = app;
+export default app; // TypeScript needs this for type checking
