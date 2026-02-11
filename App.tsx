@@ -81,24 +81,36 @@ const App: React.FC = () => {
         // Let's check the API response format from routes.ts. It returns raw DB rows.
         // We need to map them to ContentPiece.
 
-        const mappedPosts: ContentPiece[] = posts.map((p: any) => ({
-          id: p.id,
-          sourceType: p.type === 'parasite' ? 'creator_reference' : 'keyword_search',
-          originalAuthor: p.original_author || 'Unknown',
-          originalUrl: p.original_url,
-          sourceUrl: p.original_url, // Fix: Ensure sourceUrl is populated for Dashboard
-          originalText: p.original_content,
-          viralMetrics: p.meta?.engagement || { likes: 0, comments: 0 },
-          tags: [p.type === 'parasite' ? 'Viral' : 'Research'],
-          status: p.status || 'idea', // Default to idea if null
-          targetDate: p.created_at, // Use created_at as target for now
-          generatedDraft: {
-            hook: p.meta?.outline?.split('\n')[2] || "New Idea", // Naive parsing, fine for now
-            body: p.generated_content || "",
-            cta: "",
-            researchNotes: p.meta?.news || []
-          }
-        }));
+        const mappedPosts: ContentPiece[] = posts.map((p: any) => {
+          const analysis = p.meta?.ai_analysis || p.meta?.structure || {};
+          const hookText = analysis?.hook?.text || p.meta?.outline?.split('\n')[2] || "New Idea";
+
+          return {
+            id: p.id,
+            sourceType: p.type === 'parasite' ? 'creator_reference' : 'keyword_search',
+            originalAuthor: p.original_author || 'Unknown',
+            originalUrl: p.original_url || p.meta?.original_url,
+            sourceUrl: p.original_url || p.meta?.original_url,
+            originalText: p.original_content,
+            viralMetrics: p.meta?.engagement || { likes: 0, comments: 0 },
+            tags: [p.type === 'parasite' ? 'Viral' : 'Research'],
+            status: p.status || 'idea',
+            targetDate: p.created_at,
+            generatedDraft: {
+              hook: hookText,
+              body: p.generated_content || "",
+              cta: "",
+              researchNotes: p.meta?.news || [],
+              viralityAnalysis: analysis?.virality_score ? {
+                viralityReason: analysis.virality_score.verdict || '',
+                bottleneck: analysis.engagement_mechanics?.why_people_comment || '',
+                engagement_trigger: analysis.emotional_triggers?.primary_emotion || '',
+                audience_relevance: analysis.narrative_arc?.structure || ''
+              } : undefined
+            },
+            aiAnalysis: analysis?.hook ? analysis : undefined
+          };
+        });
 
         setContentPieces(mappedPosts);
       }

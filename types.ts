@@ -27,12 +27,23 @@ export interface ContentPiece {
   id: string;
   sourceType: SourceType;
   originalUrl?: string;
+  sourceUrl?: string;
   originalText?: string; // The "Source Material"
   originalAuthor?: string;
   viralMetrics?: ViralMetrics;
-  
+
   generatedDraft: GeneratedDraft;
-  
+  aiAnalysis?: {
+    hook?: { type?: string; text?: string; effectiveness?: number; why_it_works?: string };
+    narrative_arc?: { structure?: string; phases?: string[]; turning_point?: string };
+    emotional_triggers?: { primary_emotion?: string; secondary_emotions?: string[]; emotional_journey?: string };
+    persuasion_techniques?: { techniques_used?: Array<{ name: string; example: string; impact: string }>; social_proof?: string; authority_signals?: string };
+    engagement_mechanics?: { why_people_comment?: string; debate_potential?: number; shareability?: number; save_worthy?: number; call_to_action?: string };
+    virality_score?: { overall?: number; originality?: number; relatability?: number; actionability?: number; controversy?: number; verdict?: string };
+    structural_blueprint?: { total_lines?: string; line_length_pattern?: string; use_of_whitespace?: string; formatting?: string[]; rhythm?: string };
+    replication_strategy?: string;
+  };
+
   status: ContentStatus;
   targetDate?: string; // ISO string
   tags: string[]; // e.g., "Viral Reference", "News Based"
