@@ -407,6 +407,5 @@ app.use('/api', router);
 app.use('/', router);
 
 // ===== VERCEL HANDLER =====
-// CommonJS export for Vercel compatibility
-module.exports = app;
-export default app; // TypeScript needs this for type checking
+export default app;
+
