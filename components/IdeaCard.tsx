@@ -1,6 +1,7 @@
 import React from 'react';
-import { ArrowRight, Sparkles, Quote, ExternalLink, Trash2, Zap, AlertCircle, Target, Brain, TrendingUp, Heart, MessageCircle } from 'lucide-react';
+import { ArrowRight, Sparkles, Quote, Trash2, Zap, AlertCircle, Target, Brain, TrendingUp, Heart, MessageCircle } from 'lucide-react';
 import { ContentPiece } from '../types';
+import LinkedInPostLink from './LinkedInPostLink';
 
 interface IdeaCardProps {
   item: ContentPiece;
@@ -50,14 +51,11 @@ const IdeaCard: React.FC<IdeaCardProps> = ({ item, onClick, onDelete }) => {
           )}
         </div>
         <div className="flex items-center gap-2">
-          {item.sourceUrl && (
-            <a href={item.sourceUrl} target="_blank" rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center text-gray-400 hover:bg-blue-100 hover:text-blue-600 transition-all"
-              title="Ver post original">
-              <ExternalLink size={14} />
-            </a>
-          )}
+          <LinkedInPostLink
+            url={item.sourceUrl || item.originalUrl}
+            variant="button"
+            text="Ver post original en LinkedIn"
+          />
           <div className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center text-gray-400 group-hover:bg-indigo-600 group-hover:text-white transition-all">
             <ArrowRight size={14} />
           </div>

@@ -2,7 +2,8 @@ import React from 'react';
 import { ContentPiece } from '../types';
 import IdeaCard from './IdeaCard';
 import { updatePostStatus } from '../services/geminiService';
-import { PenTool, CheckCircle, Clock, ChevronRight, ExternalLink } from 'lucide-react';
+import { PenTool, CheckCircle, Clock, ChevronRight } from 'lucide-react';
+import LinkedInPostLink from './LinkedInPostLink';
 
 interface ContentManagerProps {
   ideas: ContentPiece[];
@@ -133,18 +134,12 @@ const ContentManager: React.FC<ContentManagerProps> = ({ ideas, onSelectIdea, on
                     <div className="flex justify-between items-start mb-3">
                       <span className="bg-blue-50 text-blue-600 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider">Editando</span>
                       <div className="flex items-center gap-2">
-                        {item.sourceUrl && (
-                          <a
-                            href={item.sourceUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="text-gray-300 hover:text-blue-500 transition-colors"
-                            title="Ver fuente"
-                          >
-                            <ExternalLink size={14} />
-                          </a>
-                        )}
+                        <LinkedInPostLink
+                          url={item.sourceUrl || item.originalUrl}
+                          variant="button"
+                          iconSize={14}
+                          text="Ver fuente en LinkedIn"
+                        />
                         <ChevronRight size={16} className="text-gray-300 group-hover:text-indigo-500 transition-colors" />
                       </div>
                     </div>
