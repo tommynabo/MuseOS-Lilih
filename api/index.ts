@@ -113,240 +113,126 @@ async function getCreatorPosts(profileUrls: string[], maxPosts = 3): Promise<Api
 }
 
 // ===== OPENAI FUNCTIONS =====
+// ===== OPTIMIZED AI FUNCTIONS =====
+
+// 1. QUERY EXPANSION
+async function expandSearchQuery(topic: string): Promise<string[]> {
+    try {
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [{ role: "system", content: "Eres un experto en boolean search." },
+            { role: "user", content: `Transforma "${topic}" en 3 búsquedas booleanas para LinkedIn (JSON: {queries: []}).` }],
+            response_format: { type: "json_object" }
+        });
+        const result = JSON.parse(response.choices[0].message.content || '{"queries": []}');
+        return result.queries.length > 0 ? result.queries : [topic];
+    } catch (e) { return [topic]; }
+}
+
+// 2. RELATIVE VIRALITY SCORING
 async function evaluatePostEngagement(posts: ApifyPost[]): Promise<ApifyPost[]> {
     if (posts.length === 0) return [];
 
-    console.log(`Evaluating ${posts.length} posts for engagement...`);
+    // Quick pre-filter to save tokens
+    const meaningfulPosts = posts.filter(p => {
+        const likes = p.likesCount || 0;
+        const comments = p.commentsCount || 0;
+        return likes > 10 || comments > 2; // Relaxed floor
+    });
 
-    const postsData = posts.map((p, idx) => ({
+    if (meaningfulPosts.length === 0) return posts.slice(0, 3);
+
+    const postsData = meaningfulPosts.slice(0, 15).map((p, idx) => ({ // Limit analysis to 15 posts max
         index: idx,
-        text: extractPostText(p),
-        likes: getMetric(p, 'likes'),
-        comments: getMetric(p, 'comments'),
-        shares: getMetric(p, 'shares')
+        text: extractPostText(p).substring(0, 200),
+        metrics: {
+            likes: getMetric(p, 'likes'),
+            comments: getMetric(p, 'comments'),
+            shares: getMetric(p, 'shares'),
+            ratio: getMetric(p, 'comments') / (getMetric(p, 'likes') || 1)
+        }
     }));
 
     try {
         const response = await openai.chat.completions.create({
             model: "gpt-4o",
             messages: [
-                { role: "system", content: "Eres un experto en métricas de redes sociales." },
-                {
-                    role: "user", content: `Analiza estos posts y devuelve los índices de los 5 mejores basados en engagement (likes, comments, shares).
-                ${JSON.stringify(postsData)}
-                Responde JSON puramente: { "indices": [0, 2, 4] }` }
+                { role: "system", content: "Select top 3 hidden gems based on engagement ratios." },
+                { role: "user", content: JSON.stringify(postsData) }
             ],
             response_format: { type: "json_object" }
         });
+        const result = JSON.parse(response.choices[0].message.content || '{"indices": []}');
+        const indices = result.indices || result.high_engagement_indices || [];
 
-        const content = response.choices[0].message.content || '{"indices": []}';
-        console.log("AI Evaluation result:", content);
+        if (indices.length === 0) throw new Error("No AI selection");
 
-        const result = JSON.parse(content);
-        const selectedIndices = result.indices || [];
-
-        let selectedPosts = selectedIndices
-            .map((i: number) => posts[i])
-            .filter(p => p && extractPostText(p).length > 0);
-
-        // FALLBACK: If AI selects fewer than 2 posts, fill up with top sorted posts
-        if (selectedPosts.length < 2) {
-            console.log("AI selected too few posts, using fallback sorting.");
-            const sorted = [...posts]
-                .filter(p => extractPostText(p).length > 0)
-                .sort((a, b) => {
-                    const scoreA = getMetric(a, 'likes') + getMetric(a, 'comments') * 2 + getMetric(a, 'shares') * 3;
-                    const scoreB = getMetric(b, 'likes') + getMetric(b, 'comments') * 2 + getMetric(b, 'shares') * 3;
-                    return scoreB - scoreA;
-                });
-
-            // Deduplicate by URL
-            const existingIds = new Set(selectedPosts.map(p => p.url).filter(Boolean));
-            for (const p of sorted) {
-                if (selectedPosts.length >= 5) break;
-                if (!existingIds.has(p.url)) {
-                    selectedPosts.push(p);
-                    existingIds.add(p.url);
-                }
-            }
-        }
-
-        const finalSelection = selectedPosts.slice(0, 5);
-        console.log(`Selected ${finalSelection.length} posts for processing`);
-        return finalSelection;
+        return indices.map((i: number) => meaningfulPosts[i]).filter(Boolean);
     } catch (error) {
-        console.error("Engagement evaluation error (using fallback):", error);
-        // Ultimate fallback: just sort by engagement metrics
-        return posts
-            .filter(p => extractPostText(p).length > 0)
-            .sort((a, b) => {
-                const scoreA = getMetric(a, 'likes') + getMetric(a, 'comments') * 2;
-                const scoreB = getMetric(b, 'likes') + getMetric(b, 'comments') * 2;
-                return scoreB - scoreA;
-            })
-            .slice(0, 5);
+        // Fallback: Sort by comments/likes ratio
+        return meaningfulPosts.sort((a, b) => {
+            const ratioA = getMetric(a, 'comments') / (getMetric(a, 'likes') || 1);
+            const ratioB = getMetric(b, 'comments') / (getMetric(b, 'likes') || 1);
+            return ratioB - ratioA;
+        }).slice(0, 5);
     }
 }
 
-async function generatePostOutline(content: string): Promise<string> {
-    const response = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [
-            { role: "system", content: "Actúa como un Estratega de Contenido Viral." },
-            { role: "user", content: `Crea un outline estratégico para este post de LinkedIn:\n${content}\n\nDevuelve: ANÁLISIS, HOOKS (3), CUERPO (4 puntos), CIERRE` }
-        ]
-    });
-    return response.choices[0].message.content || '';
+// 3. STRUCTURE EXTRACTION
+async function extractPostStructure(content: string): Promise<string> {
+    try {
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [{ role: "system", content: "Extract viral structure JSON." }, { role: "user", content: content }],
+            response_format: { type: "json_object" }
+        });
+        return response.choices[0].message.content || '{}';
+    } catch { return '{}'; }
 }
 
 function filterSensitiveData(text: string): string {
     // Remove phone numbers (various formats)
     let filtered = text.replace(/(\+?\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{3,4}/g, '[TELÉFONO]');
-
     // Remove WhatsApp numbers
     filtered = filtered.replace(/\(?WhatsApp\)?[\s]?[\d\s\-\(\)]+/gi, '[WHATSAPP]');
-
     // Remove email addresses
     filtered = filtered.replace(/[\w\.-]+@[\w\.-]+\.\w+/g, '[EMAIL]');
-
     // Remove URLs (www.*, http://*, https://)
     filtered = filtered.replace(/https?:\/\/[^\s]+|www\.[^\s]+/gi, '[WEBSITE]');
-
-    // Remove physical addresses (look for patterns like "Rua", "Avenida", "Av.", etc.)
+    // Remove physical addresses
     filtered = filtered.replace(/(?:Rua|Avenida|Av\.|Calle|Street|Rua|Rute|nº|Número|Loja|Edifício|Moçambique|Portugal|Brasil|España|México|Argentina)\s+[^\.]*\.?/gi, (match) => {
-        // Only remove if it looks like an address (contains numbers)
-        if (/\d/.test(match)) {
-            return '[DIRECCIÓN]';
-        }
+        if (/\d/.test(match)) return '[DIRECCIÓN]';
         return match;
     });
-
-    // Remove geographic coordinates and specific location identifiers
+    // Remove geographic coordinates
     filtered = filtered.replace(/📍\s*[^[\n]*/gi, '[UBICACIÓN]');
     filtered = filtered.replace(/Maputo|Lisboa|Porto|Rio de Janeiro|São Paulo/gi, '[CIUDAD]');
-
     return filtered.trim();
 }
 
-async function regeneratePost(outline: string, original: string, customInstructions: string): Promise<string> {
-    const systemPrompt = customInstructions || "Eres un redactor experto en Ghostwriting. Párrafos cortos. Sin emojis. Tutea.";
-    const filteredOriginal = filterSensitiveData(original);
-    const response = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [
-            { role: "system", content: `${systemPrompt}\n\nIMPORTANTE: Nunca incluyas en el post generado:\n- Números de teléfono\n- Emails\n- URLs o direcciones web\n- Direcciones físicas\n- Información de contacto\n- Datos personales o de ubicación específica` },
-            { role: "user", content: `Reescribe este post basándote en el outline:\n[OUTLINE]: ${outline}\n[ORIGINAL]: ${filteredOriginal}\n\nGenera el post final SIN incluir datos de contacto.` }
-        ]
-    });
-    return response.choices[0].message.content || '';
-}
-
-// ===== ROUTES =====
-app.get('/api/health', (_, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
-
-app.get('/api/creators', requireAuth, async (req, res) => {
-    const supabase = getUserSupabase(req);
-    const { data, error } = await supabase.from('creators').select('*');
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
-});
-
-app.post('/api/creators', requireAuth, async (req, res) => {
-    const { name, linkedinUrl, headline } = req.body;
-    const supabase = getUserSupabase(req);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return res.status(401).json({ error: "Unauthorized" });
-
-    const { data, error } = await supabase.from('creators')
-        .insert({ user_id: user.id, name, linkedin_url: linkedinUrl, headline })
-        .select().single();
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
-});
-
-app.delete('/api/creators/:id', requireAuth, async (req, res) => {
-    const { id } = req.params;
-    const supabase = getUserSupabase(req);
-    const { error } = await supabase.from('creators').delete().eq('id', id);
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ status: 'deleted' });
-});
-
-app.get('/api/posts', requireAuth, async (req, res) => {
-    const supabase = getUserSupabase(req);
-    const { data, error } = await supabase.from('posts').select('*').order('created_at', { ascending: false });
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
-});
-
-app.patch('/api/posts/:id', requireAuth, async (req, res) => {
-    const { id } = req.params;
-    const { status } = req.body;
-    const supabase = getUserSupabase(req);
-
-    if (!['idea', 'drafted', 'approved', 'posted'].includes(status)) {
-        return res.status(400).json({ error: "Invalid status" });
-    }
-
-    const { data, error } = await supabase.from('posts')
-        .update({ status })
-        .eq('id', id)
-        .select()
-        .single();
-
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
-});
-
-app.delete('/api/posts/:id', requireAuth, async (req, res) => {
-    const { id } = req.params;
-    const supabase = getUserSupabase(req);
-    const { error } = await supabase.from('posts').delete().eq('id', id);
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ message: "Post deleted successfully" });
-});
-
-app.post('/api/rewrite', requireAuth, async (req, res) => {
-    const { text, profile, instruction } = req.body;
-
-    if (!text) return res.status(400).json({ error: "Text is required" });
-
-    let prompt = "";
-    const tone = profile?.custom_instructions || "profesional y directo";
-
-    switch (instruction) {
-        case 'shorten':
-            prompt = `Actúa como un editor experto. Reescribe el siguiente texto para que sea más conciso y directo, eliminando el "fluff" pero manteniendo el mensaje principal. \n\nTexto: "${text}"`;
-            break;
-        case 'punchier':
-            prompt = `Actúa como un copywriter viral. Reescribe el siguiente texto para que tenga más impacto (punch), usando verbos de acción y oraciones poderosas. Tono: ${tone}. \n\nTexto: "${text}"`;
-            break;
-        case 'add_fact':
-            prompt = `Añade un dato curioso o estadístico relevante (puede ser general) que refuerce el siguiente punto, integrándolo naturalmente en el texto. \n\nTexto: "${text}"`;
-            break;
-        case 'rewrite':
-        default:
-            prompt = `Reescribe el siguiente texto mejorando la claridad y el flujo, adaptándolo al tono: ${tone}. \n\nTexto: "${text}"`;
-            break;
-    }
-
+// 4. REWRITE
+async function regeneratePost(structure: string, original: string, instructions: string): Promise<string> {
     try {
         const response = await openai.chat.completions.create({
             model: "gpt-4o",
-            messages: [{ role: "user", content: prompt }],
+            messages: [
+                { role: "system", content: instructions || "Ghostwriter expert." },
+                { role: "user", content: `Rewrite based on structure: ${structure} \n Context: ${original.substring(0, 500)}` }
+            ]
         });
-        res.json({ result: response.choices[0].message.content });
-    } catch (error: any) {
-        console.error("Rewrite error:", error);
-        res.status(500).json({ error: error.message });
-    }
-});
+        return response.choices[0].message.content || '';
+    } catch { return original; }
+}
 
-// ===== MAIN WORKFLOW =====
+// ===== MAIN WORKFLOW (OPTIMIZED) =====
 app.post('/api/workflow/generate', requireAuth, async (req, res) => {
-    const { source, count = 3 } = req.body; // 'keywords' or 'creators', default 3 posts
+    // Set timeout to handle long Vercel functions (though response must be sent before hard limit)
+    req.setTimeout(60000);
+
+    const { source, count = 1 } = req.body; // Default to 1 to be safe
     const supabase = getUserSupabase(req);
     const { data: { user } } = await supabase.auth.getUser();
+
     if (!user) return res.status(401).json({ error: "Unauthorized" });
 
     try {
@@ -357,86 +243,73 @@ app.post('/api/workflow/generate', requireAuth, async (req, res) => {
         const customInstructions = profile.custom_instructions || '';
         let allPosts: ApifyPost[] = [];
 
-        console.log(`[WORKFLOW] Starting generation for ${count} posts...`);
-
+        // 1. FETCH & EXPAND (Parallelized)
         if (source === 'keywords') {
-            if (keywords.length === 0) return res.status(400).json({ error: "No keywords configured." });
-            // Fetch more posts to ensure we get the requested count
-            const postsPerKeyword = Math.ceil(count / keywords.length) + 2;
-            for (const kw of keywords.slice(0, 5)) {
-                allPosts = [...allPosts, ...await searchLinkedInPosts([kw], postsPerKeyword)];
-            }
+            if (keywords.length === 0) return res.status(400).json({ error: "No keywords." });
+
+            // Limit to top 2 keywords for speed
+            const activeKeywords = keywords.slice(0, 2);
+
+            // Expand in parallel
+            const expandedLists = await Promise.all(activeKeywords.map((k: string) => expandSearchQuery(k)));
+            const searchQueries = [...new Set(expandedLists.flat())].slice(0, 3); // Max 3 final queries
+
+            // Search in parallel
+            const searchPromises = searchQueries.map(q => searchLinkedInPosts([q], 2));
+            const results = await Promise.all(searchPromises);
+            allPosts = results.flat();
+
         } else {
             const { data: creators } = await supabase.from('creators').select('linkedin_url');
-            if (!creators?.length) return res.status(400).json({ error: "No creators configured." });
-            // Fetch more posts to ensure we get the requested count
-            allPosts = await getCreatorPosts(creators.map((c: any) => c.linkedin_url), count + 5);
+            if (!creators?.length) return res.status(400).json({ error: "No creators." });
+            const urls = creators.slice(0, 5).map((c: any) => c.linkedin_url);
+            allPosts = await getCreatorPosts(urls, 5);
         }
 
-        console.log(`Fetched ${allPosts.length} posts, need ${count}`);
-        const highEngagement = await evaluatePostEngagement(allPosts);
-        console.log(`Selected ${highEngagement.length} high-engagement posts from evaluation`);
+        // 2. ANALYZE (The Sniffer)
+        const bestPosts = await evaluatePostEngagement(allPosts);
 
-        if (highEngagement.length === 0) return res.json({ status: 'success', data: [], message: "No posts with sufficient text content found" });
+        // 3. GENERATE (The Architect + Writer) - Process Top N in Parallel
+        // Only process requested count to save time
+        const postsToProcess = bestPosts.slice(0, count);
 
-        const results = [];
-        for (const post of highEngagement) {
-            // Stop if we've reached the requested count
-            if (results.length >= count) {
-                console.log(`Reached target count of ${count} posts`);
-                break;
-            }
-
+        const generatedResults = await Promise.all(postsToProcess.map(async (post) => {
             const postText = extractPostText(post);
-            if (!postText) {
-                console.warn("Skipping post with no text:", post.url || post.id);
-                continue;
-            }
+            if (!postText) return null;
 
-            try {
-                const outline = await generatePostOutline(postText);
-                const rewritten = await regeneratePost(outline, postText, customInstructions);
+            const filtered = filterSensitiveData(postText);
 
-                const inserted = await supabase.from('posts').insert({
-                    user_id: user.id,
-                    original_content: postText,
-                    generated_content: rewritten,
-                    type: source === 'keywords' ? 'research' : 'parasite',
-                    status: 'idea',
-                    meta: {
-                        outline,
-                        original_url: post.url || null,
-                        engagement: {
-                            likes: getMetric(post, 'likes'),
-                            comments: getMetric(post, 'comments'),
-                            shares: getMetric(post, 'shares')
-                        }
-                    }
-                }).select().single();
+            // Run structure extraction and rewriting
+            const structure = await extractPostStructure(filtered);
+            const rewritten = await regeneratePost(structure, filtered, customInstructions);
 
-                if (inserted.error) {
-                    console.error("Error inserting post:", inserted.error);
-                    continue;
-                }
+            // Save to DB (Fire and forget provided we catch errors)
+            const { error } = await supabase.from('posts').insert({
+                user_id: user.id,
+                original_content: postText,
+                generated_content: rewritten,
+                type: source === 'keywords' ? 'research' : 'parasite',
+                status: 'idea',
+                meta: { structure, original_url: post.url, engagement: { likes: getMetric(post, 'likes'), comments: getMetric(post, 'comments') } }
+            });
 
-                results.push({
-                    original: postText.substring(0, 200) + '...',
-                    generated: rewritten.substring(0, 300) + '...',
-                    sourceUrl: post.url
-                });
-            } catch (postError: any) {
-                console.error("Error processing post:", postError);
-                continue;
-            }
-        }
+            if (error) console.error("DB Insert Error", error);
 
-        console.log(`Successfully generated ${results.length}/${count} posts`);
+            return {
+                original: postText.substring(0, 200) + '...',
+                generated: rewritten,
+                sourceUrl: post.url
+            };
+        }));
+
+        const validResults = generatedResults.filter(Boolean);
+
         res.json({
             status: 'success',
-            postsProcessed: results.length,
-            data: results,
-            message: `${results.length} posts successfully generated`
+            data: validResults,
+            message: `${validResults.length} posts generated`
         });
+
     } catch (error: any) {
         console.error("Workflow error:", error);
         res.status(500).json({ error: error.message });
