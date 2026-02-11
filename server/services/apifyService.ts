@@ -21,21 +21,23 @@ export const searchLinkedInPosts = async (keywords: string[], maxPosts = 5) => {
     try {
         const run = await client.actor("buIWk2uOUzTmcLsuB").call(input);
         const { items } = await client.dataset(run.defaultDatasetId).listItems();
-        
-        // Filter by engagement: Must have >100 likes OR >20 comments
+
+        // Filter by engagement: Relaxed threshold to catch "Hidden Gems"
+        // We look for >30 likes (instead of 100) OR >5 comments
         const qualityPosts = items
             .filter((item: any) => {
                 const likes = item.likesCount || item.likesNumber || 0;
                 const comments = item.commentsCount || item.commentsNumber || 0;
-                return likes > 100 || comments > 20;
+                return likes > 30 || comments > 5;
             })
             .sort((a: any, b: any) => {
-                const scoreA = (a.likesCount || 0) + (a.commentsCount || 0) * 3;
-                const scoreB = (b.likesCount || 0) + (b.commentsCount || 0) * 3;
+                // Initial sort by comments weight (conversation is key)
+                const scoreA = (a.likesCount || 0) + (a.commentsCount || 0) * 5;
+                const scoreB = (b.likesCount || 0) + (b.commentsCount || 0) * 5;
                 return scoreB - scoreA;
             })
             .slice(0, maxPosts);
-        
+
         console.log(`Found ${items.length} posts, filtered ${qualityPosts.length} high-engagement posts`);
         return qualityPosts;
     } catch (error) {
@@ -62,21 +64,21 @@ export const getCreatorPosts = async (profileUrls: string[], maxPosts = 3) => {
     try {
         const run = await client.actor("A3cAPGpwBEG8RJwse").call(input);
         const { items } = await client.dataset(run.defaultDatasetId).listItems();
-        
-        // Filter by engagement: >50 likes OR >10 comments (lower threshold for creator posts)
+
+        // Filter by engagement: Relaxed for creators too (>20 likes or >3 comments)
         const qualityPosts = items
             .filter((item: any) => {
                 const likes = item.likesCount || item.likesNumber || 0;
                 const comments = item.commentsCount || item.commentsNumber || 0;
-                return likes > 50 || comments > 10;
+                return likes > 20 || comments > 3;
             })
             .sort((a: any, b: any) => {
-                const scoreA = (a.likesCount || 0) + (a.commentsCount || 0) * 3;
-                const scoreB = (b.likesCount || 0) + (b.commentsCount || 0) * 3;
+                const scoreA = (a.likesCount || 0) + (a.commentsCount || 0) * 5;
+                const scoreB = (b.likesCount || 0) + (b.commentsCount || 0) * 5;
                 return scoreB - scoreA;
             })
             .slice(0, maxPosts);
-        
+
         console.log(`Creator posts: filtered ${items.length} to ${qualityPosts.length} high-engagement posts`);
         return qualityPosts;
     } catch (error) {

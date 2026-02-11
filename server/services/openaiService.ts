@@ -7,50 +7,93 @@ const openai = new OpenAI({
 });
 
 /**
- * AI-based engagement evaluation
- * Considers likes, comments, shares holistically
+ * 1. QUERY EXPANSION: Transform simple keywords into intent-based search queries
+ */
+export const expandSearchQuery = async (topic: string): Promise<string[]> => {
+    const prompt = `
+    Actúa como un experto en búsqueda avanzada de LinkedIn.
+    Transforma el tema "${topic}" en 3 búsquedas booleanas específicas para encontrar contenido de ALTO VALOR (no genérico).
+    
+    Genera 3 variaciones:
+    1. "Historia/Aprendizaje": "${topic}" AND ("error" OR "aprendí" OR "lección" OR "historia")
+    2. "Táctico/How-To": "${topic}" AND ("cómo" OR "paso a paso" OR "guía" OR "estrategia")
+    3. "Contraintuitivo/Viral": "${topic}" AND ("nadie te dice" OR "mentira" OR "verdad" OR "contra")
+    
+    Devuelve SOLO un JSON con las 3 strings de búsqueda:
+    {
+      "queries": [
+        "${topic} AND ...",
+        "${topic} AND ...",
+        "${topic} AND ..."
+      ]
+    }
+    `;
+
+    try {
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [{ role: "system", content: "Eres un experto en boolean search." }, { role: "user", content: prompt }],
+            response_format: { type: "json_object" }
+        });
+
+        const result = JSON.parse(response.choices[0].message.content || '{"queries": []}');
+        // Fallback if AI fails: just return the topic as array
+        return result.queries.length > 0 ? result.queries : [topic];
+    } catch (error) {
+        console.error("Query expansion error:", error);
+        return [topic];
+    }
+};
+
+/**
+ * 2. RELATIVE VIRALITY SCORING (The Sniffer)
+ * Finds "Hidden Gems" by analyzing engagement ratios, not just raw volume.
  */
 export const evaluatePostEngagement = async (posts: any[]): Promise<any[]> => {
     if (posts.length === 0) return [];
 
-    const postsData = posts.map((p, idx) => ({
-        index: idx,
-        // Robust text extraction
-        text: (p.text || p.postText || p.content || p.description || '').substring(0, 500),
-        // Robust metrics extraction
-        likes: p.likesCount || p.likesNumber || p.likes || p.reactionCount || 0,
-        comments: p.commentsCount || p.commentsNumber || p.comments || 0,
-        shares: p.sharesCount || p.sharesNumber || p.shares || 0
-    }));
+    // Pre-calculate metrics for the AI to make it easier
+    const postsData = posts.map((p, idx) => {
+        const likes = p.likesCount || p.likesNumber || p.likes || p.reactionCount || 0;
+        const comments = p.commentsCount || p.commentsNumber || p.comments || 0;
+        const shares = p.sharesCount || p.sharesNumber || p.shares || 0;
 
-    // DEBUG LOG
-    if (posts.length > 0) {
-        console.log("OpenAI Service - First Post Input Keys:", Object.keys(posts[0]));
-        console.log("OpenAI Service - Mapped Data Sample:", postsData[0]);
-    }
+        // Avoid division by zero
+        const safeLikes = likes > 0 ? likes : 1;
+
+        return {
+            index: idx,
+            text: (p.text || p.postText || p.content || p.description || '').substring(0, 300), // Shorter preview
+            metrics: {
+                likes,
+                comments,
+                shares,
+                // THE RATIOS
+                comments_to_likes: (comments / safeLikes).toFixed(2), // > 0.1 is good conversation
+                shares_to_likes: (shares / safeLikes).toFixed(2)      // > 0.05 is viral/saveable
+            }
+        };
+    });
 
     const prompt = `
-    Analiza estos posts de LinkedIn y determina cuáles tienen ALTO ENGAGEMENT.
-    Un post con alto engagement puede tener:
-    - Muchos likes (>50)
-    - O muchos comentarios (>10)
-    - O muchos shares (>5)
-    - O una combinación que indica viralidad (ej: 60 likes + 40 shares + 100 comentarios = MUY ALTO)
-
-    POSTS:
+    Analiza estos posts y selecciona los "HIDDEN GEMS" (Joyas Ocultas).
+    NO busques solo los que tienen millones de likes.
+    Busca posts que tengan:
+    1. ALTO DEBATE: Ratio comentarios/likes alto (> 0.1). Indica que el tema tocó una fibra.
+    2. ALTA UTILIDAD: Ratio shares/likes alto. Indica que la gente lo guarda.
+    
+    DATA:
     ${JSON.stringify(postsData, null, 2)}
-
-    Devuelve un JSON con los índices de los posts con alto engagement (máximo 5):
-    { "high_engagement_indices": [0, 2, 4] }
-
-    Si ninguno tiene alto engagement, devuelve: { "high_engagement_indices": [] }
+    
+    Devuelve un JSON con los índices de los 3-5 mejores posts ordenados por calidad de engagement:
+    { "high_engagement_indices": [2, 0, 5] }
     `;
 
     try {
         const response = await openai.chat.completions.create({
             model: "gpt-4o",
             messages: [
-                { role: "system", content: "Eres un experto en métricas de redes sociales." },
+                { role: "system", content: "Eres un cazador de tendencias virales. Ignoras las métricas de vanidad y buscas engagement real." },
                 { role: "user", content: prompt }
             ],
             response_format: { type: "json_object" }
@@ -59,76 +102,97 @@ export const evaluatePostEngagement = async (posts: any[]): Promise<any[]> => {
         const result = JSON.parse(response.choices[0].message.content || '{"high_engagement_indices": []}');
         let indices = result.high_engagement_indices || [];
 
-        // FALLBACK: If AI finds no high-engagement posts, strictly select top 5 by metrics
         if (indices.length === 0) {
-            console.log("AI selected 0 posts. Using fallback sorting.");
+            // Fallback: Use our calculated ratios manually if AI fails
+            console.log("AI selected 0 posts. Using manual ratio fallback.");
             return posts
+                .map((p, i) => ({ ...p, originalIndex: i }))
                 .sort((a, b) => {
-                    const scoreA = (a.likesCount || 0) + (a.commentsCount || 0) * 2;
-                    const scoreB = (b.likesCount || 0) + (b.commentsCount || 0) * 2;
-                    return scoreB - scoreA;
+                    const likesA = a.likesCount || 0;
+                    const commentsA = a.commentsCount || 0;
+                    const ratioA = likesA > 0 ? commentsA / likesA : 0;
+
+                    const likesB = b.likesCount || 0;
+                    const commentsB = b.commentsCount || 0;
+                    const ratioB = likesB > 0 ? commentsB / likesB : 0;
+
+                    return ratioB - ratioA; // Sort by conversation ratio
                 })
                 .slice(0, 5);
         }
 
-        return indices.map((i: number) => posts[i]).filter(Boolean).slice(0, 5);
+        return indices.map((i: number) => posts[i]).filter(Boolean);
     } catch (error) {
         console.error("Engagement evaluation error:", error);
-        // Fallback on error
-        return posts
-            .sort((a, b) => ((b.likesCount || 0) + (b.commentsCount || 0)) - ((a.likesCount || 0) + (a.commentsCount || 0)))
-            .slice(0, 5);
+        return posts.slice(0, 5); // Worst case fallback
     }
 };
 
-export const generatePostOutline = async (originalContent: string) => {
-    const prompt = `Analiza el siguiente contenido y crea un esquema (Outline) estratégico para un post de LinkedIn.
+/**
+ * 3. THE ARCHITECT: Extract Structural DNA
+ * Instead of "summarizing", we extract the psychological structure.
+ */
+export const extractPostStructure = async (originalContent: string) => {
+    const prompt = `
+    Analiza este post viral y extrae su "ESQUELETO ESTRUCTURAL" (no el contenido, sino la forma).
     
-    INPUT:
-    ${originalContent}
+    INPUT POST:
+    "${originalContent}"
     
-    Salida esperada (Markdown):
-    ---
-    ANÁLISIS: (Resumen en 1 frase)
-    HOOKS: (3 opciones: Agresivo, Historia, Dato)
-    CUERPO: (4 puntos clave)
-    CIERRE: (Frase final)
-    ---
+    Tu salida debe ser un JSON que guíe a un redactor a replicar el éxito:
+    {
+      "hook_type": "ej: Afirmación Contraintuitiva / Historia Personal / Pregunta Retórica",
+      "structure_steps": [
+        "Paso 1: [Descripción de qué hace el autor aquí, ej: Establece credibilidad con un número]",
+        "Paso 2: [ej: Introduce el conflicto o el error común]",
+        "Paso 3: [ej: Presenta la solución en una lista de 3 puntos]",
+        "Paso 4: [ej: Cierre inspiracional]"
+      ],
+      "tone_analysis": "ej: Autoritario pero empático",
+      "psychological_trigger": "ej: Miedo a perderse algo (FOMO) / Validación de estatus"
+    }
     `;
 
-    const response = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [{ role: "system", content: "Actúa como un Estratega de Contenido Viral." }, { role: "user", content: prompt }],
-    });
+    try {
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [{ role: "system", content: "Eres un analista experto en ingeniería inversa de contenido viral." }, { role: "user", content: prompt }],
+            response_format: { type: "json_object" }
+        });
 
-    return response.choices[0].message.content;
+        return response.choices[0].message.content; // Returns the JSON string
+    } catch (error) {
+        console.error("Structure extraction error:", error);
+        return null; // Handle null in caller
+    }
 };
 
 /**
- * Rewrite post using the master prompt (custom_instructions) from profile
+ * 4. THE WRITER: Fill the structure with new content
  */
-export const regeneratePost = async (outline: string, originalContent: string, customInstructions: string) => {
+export const regeneratePost = async (structureJson: string, originalContent: string, customInstructions: string) => {
     const systemPrompt = customInstructions || `
     Eres un redactor experto en Ghostwriting para LinkedIn.
-    - Escribe de forma directa y contundente
-    - Usa párrafos cortos
-    - Sin emojis
-    - Tutea al lector
-    - IMPORTANTE: ELIMINA CUALQUIER DATO DE CONTACTO (teléfonos, emails, direcciones físicas, URLs, CTAs de agendar llamada).
-    - El objetivo es generar curiosidad y autoridad, no vender directamente.
+    Tu objetivo es escribir contenido nuevo que se sienta tuyo, pero usando una estructura probada.
     `;
 
     const prompt = `
-    Reescribe este contenido para LinkedIn basándote en el outline.
-    Mantén la esencia pero adáptalo a MI voz.
+    Instrucciones:
+    1. Tienes un "ESQUELETO ESTRUCTURAL" de un post viral.
+    2. Tienes un TEMA (o usa el tema del post original si no se provee uno).
+    3. ESCRIBE un post NUEVO sobre el tema, siguiendo PASO A PASO la estructura provista.
     
-    [OUTLINE]:
-    ${outline}
+    ESTRUCTURA A SEGUIR (JSON):
+    ${structureJson}
     
-    [TEXTO_ORIGINAL]:
-    ${originalContent}
+    CONTEXTO ORIGEN (Solo referencia):
+    ${originalContent.substring(0, 500)}...
     
-    Genera el post final listo para publicar.
+    OUTPUT:
+    Escribe el post final. Sin preámbulos.
+    - Usa párrafos cortos.
+    - Sin hashtags excesivos.
+    - Tono directo y conversacional.
     `;
 
     const response = await openai.chat.completions.create({
@@ -140,6 +204,11 @@ export const regeneratePost = async (outline: string, originalContent: string, c
     });
 
     return response.choices[0].message.content;
+};
+
+// Keep for compatibility if needed, but we prefer extractPostStructure
+export const generatePostOutline = async (originalContent: string) => {
+    return extractPostStructure(originalContent);
 };
 
 export const generateViralityAnalysis = async (postContent: string, originalMetrics?: { likes: number; comments: number }) => {
@@ -175,7 +244,7 @@ export const generateViralityAnalysis = async (postContent: string, originalMetr
             ],
             response_format: { type: "json_object" }
         });
-        
+
         const result = JSON.parse(response.choices[0].message.content || '{}');
         return result;
     } catch (error) {
@@ -216,4 +285,3 @@ export const generateIdeasFromResearch = async (postContent: string, researchDat
 
     return JSON.parse(response.choices[0].message.content || "{}");
 }
-

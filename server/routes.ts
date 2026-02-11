@@ -1,7 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { supabaseAdmin, getSupabaseUserClient } from './db';
 import { getCreatorPosts, searchLinkedInPosts, searchGoogleNews } from './services/apifyService';
-import { generatePostOutline, regeneratePost, generateIdeasFromResearch, evaluatePostEngagement } from './services/openaiService';
+import { generatePostOutline, regeneratePost, generateIdeasFromResearch, evaluatePostEngagement, expandSearchQuery, extractPostStructure } from './services/openaiService';
 
 const router = express.Router();
 
@@ -27,6 +27,8 @@ const requireAuth = (req: Request, res: Response, next: NextFunction) => {
 interface ApifyPost {
     id?: string;
     url?: string;
+    postUrl?: string;
+    socialUrl?: string;
     text?: string;
     postText?: string;
     content?: string;
@@ -34,12 +36,17 @@ interface ApifyPost {
     author?: {
         name?: string;
     };
+    authorName?: string;
     likesCount?: number;
     commentsCount?: number;
     sharesCount?: number;
     likesNumber?: number;
     commentsNumber?: number;
     sharesNumber?: number;
+    reactionCount?: number;
+    likes?: number;
+    comments?: number;
+    shares?: number;
 }
 
 interface CreateCreatorRequest {
@@ -397,18 +404,34 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
         console.log(`[WORKFLOW] Starting generation for ${count} posts...`);
 
         if (source === 'keywords') {
-            // Search LinkedIn for each keyword
-            console.log(`Searching LinkedIn for keywords: ${keywords.join(', ')}`);
+            console.log(`Processing keywords: ${keywords.join(', ')}`);
 
             if (keywords.length === 0) {
                 res.status(400).json({ error: "No keywords configured. Add keywords in Settings." });
                 return;
             }
 
-            // Search for each keyword - fetch more to ensure we get the requested count
-            const postsPerKeyword = Math.ceil(count / keywords.length) + 2;
-            for (const keyword of keywords.slice(0, 5)) {
-                const posts = await searchLinkedInPosts([keyword], postsPerKeyword) as ApifyPost[];
+            // 1. IMPROVED INPUT: Use AI to expand queries
+            let expandedQueries: string[] = [];
+            for (const keyword of keywords.slice(0, 3)) { // Limit to top 3 keywords to avoid timeout
+                // Detect if it's already a complex query or just a generic term
+                if (keyword.includes('"') || keyword.includes('AND')) {
+                    expandedQueries.push(keyword);
+                } else {
+                    const expansion = await expandSearchQuery(keyword);
+                    expandedQueries = [...expandedQueries, ...expansion];
+                }
+            }
+
+            // Deduplicate
+            expandedQueries = [...new Set(expandedQueries)];
+            console.log(`Expanded ${keywords.length} keywords into ${expandedQueries.length} intent-based queries:`, expandedQueries);
+
+            // Search for each expanded query
+            // We fetch less per query because we have more queries now
+            const postsPerQuery = 2;
+            for (const query of expandedQueries.slice(0, 5)) { // Limit to 5 queries total for performance
+                const posts = await searchLinkedInPosts([query], postsPerQuery) as ApifyPost[];
                 allPosts = [...allPosts, ...posts];
             }
         } else {
@@ -428,21 +451,28 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
 
         console.log(`Fetched ${allPosts.length} total posts, need ${count}`);
 
-        // Step 2: AI-based engagement evaluation
-        const highEngagementPosts = await evaluatePostEngagement(allPosts);
-        console.log(`AI selected ${highEngagementPosts.length} high-engagement posts`);
+        // Remove duplicates by ID or approx text match
+        const uniquePostsMap = new Map();
+        allPosts.forEach(p => {
+            const key = p.url || p.postUrl || p.text?.substring(0, 50);
+            if (key && !uniquePostsMap.has(key)) {
+                uniquePostsMap.set(key, p);
+            }
+        });
+        const uniquePosts = Array.from(uniquePostsMap.values());
+
+        // Step 2: RELATIVE VIRALITY SCORING (The Sniffer)
+        // This function now uses the Improved Logic (Ratios)
+        const highEngagementPosts = await evaluatePostEngagement(uniquePosts);
+        console.log(`AI selected ${highEngagementPosts.length} high-engagement posts (Hidden Gems)`);
 
         if (highEngagementPosts.length === 0) {
             res.json({ status: 'success', data: [], message: "No high-engagement posts found" });
             return;
         }
 
-        // Step 3: Process each post
+        // Step 3: Process each post (The Architect + The Writer)
         const processedPosts = [];
-
-        if (highEngagementPosts.length > 0) {
-            console.log("Full First Post Object:", JSON.stringify(highEngagementPosts[0], null, 2));
-        }
 
         for (const post of highEngagementPosts) {
             // Stop if we've reached the requested count
@@ -462,11 +492,11 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
             // Filter sensitive data before processing
             const filteredContent = filterSensitiveData(postContent);
 
-            // Generate Outline
-            const outline = await generatePostOutline(filteredContent);
+            // 3. THE ARCHITECT: Extract Structural DNA
+            const structureJson = await extractPostStructure(filteredContent);
 
-            // Regenerate using custom_instructions (tone of voice)
-            const rewritten = await regeneratePost(outline || '', filteredContent, customInstructions);
+            // 4. THE WRITER: Fill the structure
+            const rewritten = await regeneratePost(structureJson || '', filteredContent, customInstructions);
 
             // Save to DB
             const { error: insertError } = await supabase.from('posts').insert({
@@ -479,14 +509,14 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
                 type: source === 'keywords' ? 'research' : 'parasite',
                 status: 'idea',
                 meta: {
-                    outline,
+                    structure: structureJson, // Save structure for debugging/future use
                     original_url: post.url || post.postUrl || null,
                     engagement: {
                         likes: getMetric(post, 'likes'),
                         comments: getMetric(post, 'comments'),
                         shares: getMetric(post, 'shares')
                     },
-                    raw_debug: post // Saving the whole object in meta to inspect in Supabase if needed
+                    raw_debug: post
                 }
             });
 
