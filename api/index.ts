@@ -303,7 +303,8 @@ router.post('/rewrite', requireAuth, async (req, res) => {
     } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-router.post('/workflow/generate', requireAuth, async (req, res) => {
+// ===== WORKFLOW LOGIC (EXTRACTED) =====
+async function executeWorkflowGenerate(req: Request, res: Response) {
     req.setTimeout(60000); // 60s timeout
     const { source, count = 1 } = req.body;
     const supabase = getUserSupabase(req);
@@ -372,41 +373,21 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
         console.error("Workflow error:", error);
         res.status(500).json({ error: error.message });
     }
-});
+}
 
-// Legacy support - just redirect to /generate with the right source
+router.post('/workflow/generate', requireAuth, executeWorkflowGenerate);
+
+// Legacy support - call the shared workflow function
 router.post('/workflow/parasite', requireAuth, async (req, res) => {
     req.body.source = 'creators';
     req.body.count = req.body.count || 1;
-    // Call the generate endpoint logic directly
-    req.url = '/workflow/generate';
-    req.path = '/workflow/generate';
-    // Re-route to generate
-    const generateRoute = router.stack.find(layer =>
-        layer.route && layer.route.path === '/workflow/generate'
-    );
-    if (generateRoute && generateRoute.route) {
-        const handler = generateRoute.route.stack[generateRoute.route.stack.length - 1].handle;
-        return handler(req, res);
-    }
-    return res.status(500).json({ error: 'Route not found' });
+    return executeWorkflowGenerate(req, res);
 });
 
 router.post('/workflow/research', requireAuth, async (req, res) => {
     req.body.source = 'keywords';
     req.body.count = req.body.count || 1;
-    // Call the generate endpoint logic directly
-    req.url = '/workflow/generate';
-    req.path = '/workflow/generate';
-    // Re-route to generate
-    const generateRoute = router.stack.find(layer =>
-        layer.route && layer.route.path === '/workflow/generate'
-    );
-    if (generateRoute && generateRoute.route) {
-        const handler = generateRoute.route.stack[generateRoute.route.stack.length - 1].handle;
-        return handler(req, res);
-    }
-    return res.status(500).json({ error: 'Route not found' });
+    return executeWorkflowGenerate(req, res);
 });
 
 
