@@ -30,6 +30,9 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
     const [schedActive, setSchedActive] = useState(true);
     const [isSavingSchedule, setIsSavingSchedule] = useState(false);
 
+    // Time picker state
+    const [showTimePicker, setShowTimePicker] = useState(false);
+
     // Drag and drop state
     const [draggedItem, setDraggedItem] = useState<{ item: ContentPiece; source: string } | null>(null);
     const [previewPost, setPreviewPost] = useState<ContentPiece | null>(null);
@@ -84,10 +87,6 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
             setIsSavingSchedule(false);
         }
     };
-
-    // Drag and drop state
-    const [draggedItem, setDraggedItem] = useState<{ item: ContentPiece; source: string } | null>(null);
-    const [previewPost, setPreviewPost] = useState<ContentPiece | null>(null);
 
     // Filter content by status
     const newIdeas = ideas.filter(i => i.status === 'idea');
@@ -279,18 +278,85 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
 
                         <div className="flex flex-col items-center justify-center mb-8 relative h-24 w-full">
                             <div className="relative z-10 w-full h-full flex items-center justify-center">
-                                {/* Invisible Time Input Overlay - positioned specifically over the time display */}
-                                <input
-                                    type="time"
-                                    value={schedTime}
-                                    onChange={(e) => setSchedTime(e.target.value)}
-                                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-30"
-                                    style={{ pointerEvents: 'auto' }}
-                                />
-                                <div className="text-7xl font-bold text-gray-900 tracking-tighter flex items-center hover:text-indigo-600 transition-colors select-none">
+                                <button
+                                    onClick={() => setShowTimePicker(!showTimePicker)}
+                                    className="text-7xl font-bold text-gray-900 tracking-tighter hover:text-indigo-600 transition-colors select-none"
+                                >
                                     {schedTime}
-                                </div>
+                                </button>
                             </div>
+                            
+                            {/* Time Picker Dropdown */}
+                            {showTimePicker && (
+                                <div className="absolute top-24 z-50 bg-white border-2 border-indigo-200 rounded-2xl shadow-2xl p-6 w-80">
+                                    <div className="grid grid-cols-2 gap-6">
+                                        {/* Hours */}
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-400 uppercase mb-3 block text-center">Horas</label>
+                                            <div className="bg-gray-50 rounded-xl p-2 h-64 overflow-y-auto custom-scrollbar">
+                                                <div className="space-y-2">
+                                                    {Array.from({ length: 24 }, (_, i) => {
+                                                        const hour = i.toString().padStart(2, '0');
+                                                        const isSelected = schedTime.startsWith(hour);
+                                                        return (
+                                                            <button
+                                                                key={`hour-${i}`}
+                                                                onClick={() => {
+                                                                    const [_, mins] = schedTime.split(':');
+                                                                    setSchedTime(`${hour}:${mins}`);
+                                                                }}
+                                                                className={`w-full py-2 rounded-lg font-bold transition-all ${
+                                                                    isSelected
+                                                                        ? 'bg-indigo-600 text-white shadow-md'
+                                                                        : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
+                                                                }`}
+                                                            >
+                                                                {hour}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Minutes */}
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-400 uppercase mb-3 block text-center">Minutos</label>
+                                            <div className="bg-gray-50 rounded-xl p-2 h-64 overflow-y-auto custom-scrollbar">
+                                                <div className="space-y-2">
+                                                    {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((minute) => {
+                                                        const mins = minute.toString().padStart(2, '0');
+                                                        const [hours] = schedTime.split(':');
+                                                        const isSelected = schedTime === `${hours}:${mins}`;
+                                                        return (
+                                                            <button
+                                                                key={`minute-${minute}`}
+                                                                onClick={() => {
+                                                                    setSchedTime(`${hours}:${mins}`);
+                                                                }}
+                                                                className={`w-full py-2 rounded-lg font-bold transition-all ${
+                                                                    isSelected
+                                                                        ? 'bg-indigo-600 text-white shadow-md'
+                                                                        : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
+                                                                }`}
+                                                            >
+                                                                {mins}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => setShowTimePicker(false)}
+                                        className="w-full mt-4 py-2 bg-gray-900 text-white font-bold rounded-lg hover:bg-gray-800 transition-all"
+                                    >
+                                        Listo
+                                    </button>
+                                </div>
+                            )}
+                            
                             <span className="text-[10px] uppercase font-bold text-gray-400 tracking-widest mt-2 flex items-center gap-1 pointer-events-none">
                                 <Calendar size={10} /> Hora de ejecución
                             </span>
