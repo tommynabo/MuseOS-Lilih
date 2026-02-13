@@ -660,6 +660,179 @@ router.post('/workflow/research', requireAuth, async (req, res) => {
     return executeWorkflowGenerate(req, res);
 });
 
+// ===== SCHEDULE / AUTOPILOT ROUTES =====
+
+// GET - Obtener configuración del schedule del usuario
+router.get('/schedule', requireAuth, async (req: any, res) => {
+    try {
+        const supabase = getUserSupabase(req);
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
+        
+        if (userError || !user) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        const { data, error } = await supabaseAdmin!
+            .from('schedules')
+            .select('*')
+            .eq('user_id', user.id);
+
+        if (error) throw error;
+
+        const schedule = data && data.length > 0 ? data[0] : null;
+        res.json({
+            status: 'success',
+            schedule
+        });
+    } catch (error: any) {
+        console.error('Error getting schedule:', error);
+        res.status(500).json({ error: error.message || 'Failed to get schedule' });
+    }
+});
+
+// POST - Crear o actualizar schedule
+router.post('/schedule', requireAuth, async (req: any, res) => {
+    try {
+        const supabase = getUserSupabase(req);
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
+        
+        if (userError || !user) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        const { enabled, time, timezone, source, count } = req.body;
+
+        // Validar inputs
+        if (!time || !source || count === undefined) {
+            return res.status(400).json({ error: 'Missing required fields: time, source, count' });
+        }
+
+        if (!/^\d{2}:\d{2}$/.test(time)) {
+            return res.status(400).json({ error: 'Invalid time format. Use HH:MM' });
+        }
+
+        if (!['keywords', 'creators'].includes(source)) {
+            return res.status(400).json({ error: 'Source must be "keywords" or "creators"' });
+        }
+
+        // Check if schedule exists
+        const { data: existing } = await supabaseAdmin!
+            .from('schedules')
+            .select('id')
+            .eq('user_id', user.id)
+            .single();
+
+        const scheduleData = {
+            user_id: user.id,
+            enabled: enabled !== false,
+            time,
+            timezone: timezone || 'Europe/Madrid',
+            source,
+            count: Math.max(1, Math.min(count, 20))
+        };
+
+        let savedSchedule;
+        if (existing) {
+            // Update existing schedule
+            const { data, error } = await supabaseAdmin!
+                .from('schedules')
+                .update(scheduleData)
+                .eq('id', existing.id)
+                .select()
+                .single();
+            if (error) throw error;
+            savedSchedule = data;
+        } else {
+            // Create new schedule
+            const { data, error } = await supabaseAdmin!
+                .from('schedules')
+                .insert(scheduleData)
+                .select()
+                .single();
+            if (error) throw error;
+            savedSchedule = data;
+        }
+
+        res.json({
+            status: 'success',
+            message: `Schedule ${savedSchedule.enabled ? 'enabled' : 'disabled'}`,
+            schedule: savedSchedule
+        });
+    } catch (error: any) {
+        console.error('Error saving schedule:', error);
+        res.status(500).json({ error: error.message || 'Failed to save schedule' });
+    }
+});
+
+// PUT - Toggle schedule on/off
+router.put('/schedule/toggle', requireAuth, async (req: any, res) => {
+    try {
+        const supabase = getUserSupabase(req);
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
+        
+        if (userError || !user) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        const { data: schedules, error: fetchError } = await supabaseAdmin!
+            .from('schedules')
+            .select('*')
+            .eq('user_id', user.id);
+
+        if (fetchError) throw fetchError;
+        if (!schedules || schedules.length === 0) {
+            return res.status(404).json({ error: 'No schedule found' });
+        }
+
+        const currentSchedule = schedules[0];
+        const { data: updated, error: updateError } = await supabaseAdmin!
+            .from('schedules')
+            .update({ enabled: !currentSchedule.enabled })
+            .eq('id', currentSchedule.id)
+            .select()
+            .single();
+
+        if (updateError) throw updateError;
+        
+        res.json({
+            status: 'success',
+            message: `Schedule ${updated.enabled ? 'enabled' : 'disabled'}`,
+            schedule: updated
+        });
+    } catch (error: any) {
+        console.error('Error toggling schedule:', error);
+        res.status(500).json({ error: error.message || 'Failed to toggle schedule' });
+    }
+});
+
+// GET - Obtener historial de ejecuciones del schedule
+router.get('/schedule/executions', requireAuth, async (req: any, res) => {
+    try {
+        const supabase = getUserSupabase(req);
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
+        
+        if (userError || !user) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        const { data: executions, error } = await supabaseAdmin!
+            .from('schedule_executions')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('executed_at', { ascending: false })
+            .limit(50);
+
+        if (error) throw error;
+
+        res.json({
+            status: 'success',
+            executions: executions || []
+        });
+    } catch (error: any) {
+        console.error('Error getting executions:', error);
+        res.status(500).json({ error: error.message || 'Failed to get executions' });
+    }
+});
 
 // Mount router on both /api and / to handle Vercel path variations
 app.use('/api', router);
