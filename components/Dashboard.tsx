@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Stats, ContentPiece } from '../types';
 import IdeaCard from './IdeaCard';
 import LinkedInPreview from './LinkedInPreview';
-import { PenTool, CheckCircle, Clock, Search, Bell, Sparkles, Zap, TrendingUp, Users, Hash, ChevronRight, Calendar, ExternalLink, Trash2 } from 'lucide-react';
+import { PenTool, CheckCircle, Clock, Search, Bell, Sparkles, Zap, TrendingUp, Users, Hash, ChevronRight, Calendar, ExternalLink, Trash2, Check } from 'lucide-react';
 
 interface DashboardProps {
     stats: Stats;
@@ -32,6 +32,8 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
 
     // Time picker state
     const [showTimePicker, setShowTimePicker] = useState(false);
+    const [isSavingTime, setIsSavingTime] = useState(false);
+    const [saveTimeSuccess, setSaveTimeSuccess] = useState(false);
 
     // Drag and drop state
     const [draggedItem, setDraggedItem] = useState<{ item: ContentPiece; source: string } | null>(null);
@@ -85,6 +87,28 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
             alert('Error toggling schedule');
         } finally {
             setIsSavingSchedule(false);
+        }
+    };
+
+    const handleSaveTime = async () => {
+        setIsSavingTime(true);
+        try {
+            await saveScheduleConfig({
+                enabled: schedActive,
+                time: schedTime,
+                source: schedSource,
+                count: schedCount
+            });
+            setSaveTimeSuccess(true);
+            setTimeout(() => {
+                setShowTimePicker(false);
+                setSaveTimeSuccess(false);
+            }, 800);
+        } catch (error) {
+            console.error('Error saving time:', error);
+            alert('Error saving time');
+        } finally {
+            setIsSavingTime(false);
         }
     };
 
@@ -349,10 +373,30 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
                                         </div>
                                     </div>
                                     <button
-                                        onClick={() => setShowTimePicker(false)}
-                                        className="w-full mt-4 py-2 bg-gray-900 text-white font-bold rounded-lg hover:bg-gray-800 transition-all"
+                                        onClick={handleSaveTime}
+                                        disabled={isSavingTime}
+                                        className={`w-full mt-4 py-2.5 font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${
+                                            saveTimeSuccess
+                                                ? 'bg-green-500 text-white'
+                                                : isSavingTime
+                                                ? 'bg-indigo-400 text-white opacity-70 cursor-not-allowed'
+                                                : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                                        }`}
                                     >
-                                        Listo
+                                        {saveTimeSuccess ? (
+                                            <>
+                                                <Check size={18} /> Guardado
+                                            </>
+                                        ) : isSavingTime ? (
+                                            <>
+                                                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                                Guardando...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Check size={18} /> Guardar Hora
+                                            </>
+                                        )}
                                     </button>
                                 </div>
                             )}
