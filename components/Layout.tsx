@@ -48,9 +48,10 @@ const Layout: React.FC<LayoutProps> = ({ children, activeTab, onNavigate, curren
                 <img src={currentProfile.avatar} className="w-12 h-12 rounded-full border-2 border-white shadow-sm" alt="Avatar" />
                 <div>
                     <p className="text-sm font-bold text-gray-900">{currentProfile.name}</p>
-                    <div className="flex items-center gap-1.5 mt-0.5">
+                    <p className="text-[10px] text-gray-600 font-medium mt-0.5">{currentProfile.role}</p>
+                    <div className="flex items-center gap-1.5 mt-1">
                         <span className="w-2 h-2 rounded-full bg-green-500"></span>
-                        <p className="text-[10px] text-gray-500 font-medium uppercase tracking-wide">En línea</p>
+                        <p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Disponible</p>
                     </div>
                 </div>
             </div>

@@ -11,6 +11,16 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const APIFY_TOKEN = process.env.APIFY_API_TOKEN;
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
 
+// ===== TABLES =====
+const TABLE_PROFILES = process.env.TABLE_PROFILES;
+const TABLE_POSTS = process.env.TABLE_POSTS;
+const TABLE_CREATORS = process.env.TABLE_CREATORS;
+
+if (!TABLE_PROFILES || !TABLE_POSTS || !TABLE_CREATORS) {
+    const errorMsg = `MISSING_TABLE_VARS: PROFILES=${TABLE_PROFILES}, POSTS=${TABLE_POSTS}, CREATORS=${TABLE_CREATORS}`;
+    console.error(`[FATAL] ${errorMsg}`);
+}
+
 // ===== CLIENTS =====
 // Initialize safely to prevent 500 startup crashes if env vars are missing
 const supabaseAdmin = (SUPABASE_URL && SUPABASE_SERVICE_KEY)
@@ -364,7 +374,8 @@ router.get('/health', (_, res) => res.json({ status: 'ok', time: new Date().toIS
 
 router.get('/creators', requireAuth, async (req, res) => {
     const supabase = getUserSupabase(req);
-    const { data, error } = await supabase.from('creators').select('*');
+    if (!TABLE_CREATORS) return res.status(500).json({ error: "TABLE_CREATORS env var missing. Isolation failed." });
+    const { data, error } = await supabase.from(TABLE_CREATORS).select('*');
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
 });
@@ -375,7 +386,8 @@ router.post('/creators', requireAuth, async (req, res) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return res.status(401).json({ error: "Unauthorized" });
 
-    const { data, error } = await supabase.from('creators')
+    if (!TABLE_CREATORS) return res.status(500).json({ error: "TABLE_CREATORS env var missing." });
+    const { data, error } = await supabase.from(TABLE_CREATORS)
         .insert({ user_id: user.id, name, linkedin_url: linkedinUrl, headline })
         .select().single();
     if (error) return res.status(500).json({ error: error.message });
@@ -385,14 +397,16 @@ router.post('/creators', requireAuth, async (req, res) => {
 router.delete('/creators/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
     const supabase = getUserSupabase(req);
-    const { error } = await supabase.from('creators').delete().eq('id', id);
+    if (!TABLE_CREATORS) return res.status(500).json({ error: "TABLE_CREATORS env var missing." });
+    const { error } = await supabase.from(TABLE_CREATORS).delete().eq('id', id);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ status: 'deleted' });
 });
 
 router.get('/posts', requireAuth, async (req, res) => {
     const supabase = getUserSupabase(req);
-    const { data, error } = await supabase.from('posts').select('*').order('created_at', { ascending: false });
+    if (!TABLE_POSTS) return res.status(500).json({ error: "TABLE_POSTS env var missing." });
+    const { data, error } = await supabase.from(TABLE_POSTS).select('*').order('created_at', { ascending: false });
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
 });
@@ -401,7 +415,8 @@ router.patch('/posts/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
     const supabase = getUserSupabase(req);
-    const { data, error } = await supabase.from('posts').update({ status }).eq('id', id).select().single();
+    if (!TABLE_POSTS) return res.status(500).json({ error: "TABLE_POSTS env var missing." });
+    const { data, error } = await supabase.from(TABLE_POSTS).update({ status }).eq('id', id).select().single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
 });
@@ -409,7 +424,8 @@ router.patch('/posts/:id', requireAuth, async (req, res) => {
 router.delete('/posts/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
     const supabase = getUserSupabase(req);
-    const { error } = await supabase.from('posts').delete().eq('id', id);
+    if (!TABLE_POSTS) return res.status(500).json({ error: "TABLE_POSTS env var missing." });
+    const { error } = await supabase.from(TABLE_POSTS).delete().eq('id', id);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ message: "Post deleted successfully" });
 });
@@ -446,7 +462,8 @@ async function executeWorkflowGenerate(req: Request, res: Response) {
     const targetCount = Math.min(Number(count) || 1, 10); // Cap at 10
 
     try {
-        const { data: profile } = await supabase.from('profiles').select('*').single();
+        if (!TABLE_PROFILES) throw new Error("TABLE_PROFILES env var missing.");
+        const { data: profile } = await supabase.from(TABLE_PROFILES).select('*').single();
         if (!profile) return res.status(400).json({ error: "Config needed." });
 
         const keywords = profile.niche_keywords || [];
@@ -468,7 +485,8 @@ async function executeWorkflowGenerate(req: Request, res: Response) {
             searchQueries = rawQueries.filter(q => typeof q === 'string' && q.trim().length > 0).slice(0, 3); // Max 3 queries to avoid Vercel timeout
             console.log('[WORKFLOW] Final search queries:', searchQueries);
         } else {
-            const { data: creators } = await supabase.from('creators').select('linkedin_url');
+            if (!TABLE_CREATORS) throw new Error("TABLE_CREATORS env var missing.");
+            const { data: creators } = await supabase.from(TABLE_CREATORS).select('linkedin_url');
             if (!creators?.length) return res.status(400).json({ error: "No creators." });
             creatorUrls = creators
                 .map((c: any) => c.linkedin_url)
@@ -561,7 +579,8 @@ async function executeWorkflowGenerate(req: Request, res: Response) {
                 try { analysisObj = JSON.parse(structure); } catch { }
 
                 const postUrl = post.url || post.postUrl || '';
-                const insertResult = await supabase.from('posts').insert({
+                if (!TABLE_POSTS) throw new Error("TABLE_POSTS env var missing.");
+                const insertResult = await supabase.from(TABLE_POSTS).insert({
                     user_id: user.id,
                     original_content: postText,
                     generated_content: rewritten,

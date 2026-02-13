@@ -11,6 +11,14 @@ import { ContentPiece, ClientProfile, ClientPersona } from './types';
 import { Session } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
 
+const TABLE_PROFILES = import.meta.env.VITE_TABLE_PROFILES;
+
+if (!TABLE_PROFILES) {
+  // We throw a visible error so the user knows exactly why it's not working correctly
+  const msg = "CRITICAL: VITE_TABLE_PROFILES variable missing. Project sync is likely if you don't fix this.";
+  console.error(msg);
+}
+
 const App: React.FC = () => {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,8 +52,11 @@ const App: React.FC = () => {
 
   const fetchProfile = async (userId: string) => {
     try {
+      if (!TABLE_PROFILES) {
+        throw new Error("VITE_TABLE_PROFILES is not defined in environment variables. Set it in Vercel to isolate projects.");
+      }
       const { data, error } = await supabase
-        .from('profiles')
+        .from(TABLE_PROFILES)
         .select('*')
         .eq('user_id', userId)
         .single();
@@ -174,9 +185,13 @@ const App: React.FC = () => {
     setCurrentProfile(updated);
 
     if (session?.user) {
+      if (!TABLE_PROFILES) {
+        alert("Error: Variable VITE_TABLE_PROFILES no configurada. El guardado podría fallar o sincronizarse.");
+        return;
+      }
       try {
         const { error } = await supabase
-          .from('profiles')
+          .from(TABLE_PROFILES)
           .upsert({
             id: session.user.id, // ID must equal user_id due to DB constraint
             user_id: session.user.id,
