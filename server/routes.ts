@@ -2,6 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import { supabaseAdmin, getSupabaseUserClient } from './db';
 import { getCreatorPosts, searchLinkedInPosts, searchGoogleNews } from './services/apifyService';
 import { generatePostOutline, regeneratePost, generateIdeasFromResearch, evaluatePostEngagement, expandSearchQuery, extractPostStructure } from './services/openaiService';
+import { getScheduleConfigs, saveScheduleConfig, startScheduleJob, stopScheduleJob } from './services/schedulerService';
 
 const router = express.Router();
 
@@ -559,6 +560,184 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
     } catch (error: any) {
         console.error("Generate workflow error:", error);
         res.status(500).json({ error: error.message || "Workflow failed" });
+    }
+});
+
+// ============================================
+// 🔔 SCHEDULE / AUTOPILOT ROUTES
+// ============================================
+
+/**
+ * GET - Obtener configuración del schedule del usuario
+ */
+router.get('/schedule', requireAuth, async (req: Request, res: Response) => {
+    try {
+        const { data: { user }, error: userError } = await getSupabaseUserClient(
+            (req as any).token
+        ).auth.getUser();
+
+        if (userError || !user) {
+            res.status(401).json({ error: 'Unauthorized' });
+            return;
+        }
+
+        const schedules = await getScheduleConfigs(user.id);
+        const schedule = schedules.length > 0 ? schedules[0] : null;
+
+        res.json({
+            status: 'success',
+            schedule
+        });
+    } catch (error) {
+        console.error('Error getting schedule:', error);
+        res.status(500).json({ error: 'Failed to get schedule' });
+    }
+});
+
+/**
+ * POST - Crear o actualizar schedule
+ */
+router.post('/schedule', requireAuth, async (req: Request, res: Response) => {
+    try {
+        const { data: { user }, error: userError } = await getSupabaseUserClient(
+            (req as any).token
+        ).auth.getUser();
+
+        if (userError || !user) {
+            res.status(401).json({ error: 'Unauthorized' });
+            return;
+        }
+
+        const { enabled, time, timezone, source, count } = req.body;
+
+        // Validar inputs
+        if (!time || !source || count === undefined) {
+            res.status(400).json({ error: 'Missing required fields: time, source, count' });
+            return;
+        }
+
+        if (!/^\d{2}:\d{2}$/.test(time)) {
+            res.status(400).json({ error: 'Invalid time format. Use HH:MM' });
+            return;
+        }
+
+        if (!['keywords', 'creators'].includes(source)) {
+            res.status(400).json({ error: 'Source must be "keywords" or "creators"' });
+            return;
+        }
+
+        const scheduleConfig = await saveScheduleConfig(user.id, {
+            enabled: enabled !== false,
+            time,
+            timezone: timezone || 'Europe/Madrid',
+            source,
+            count: Math.max(1, Math.min(count, 20))
+        });
+
+        if (!scheduleConfig) {
+            res.status(500).json({ error: 'Failed to save schedule' });
+            return;
+        }
+
+        // Iniciar o detener el job
+        if (scheduleConfig.enabled) {
+            startScheduleJob(scheduleConfig);
+        } else {
+            stopScheduleJob(scheduleConfig.id!, user.id);
+        }
+
+        res.json({
+            status: 'success',
+            message: `Schedule ${scheduleConfig.enabled ? 'enabled' : 'disabled'}`,
+            schedule: scheduleConfig
+        });
+    } catch (error: any) {
+        console.error('Error saving schedule:', error);
+        res.status(500).json({ error: error.message || 'Failed to save schedule' });
+    }
+});
+
+/**
+ * PUT - Toggle schedule on/off
+ */
+router.put('/schedule/toggle', requireAuth, async (req: Request, res: Response) => {
+    try {
+        const { data: { user }, error: userError } = await getSupabaseUserClient(
+            (req as any).token
+        ).auth.getUser();
+
+        if (userError || !user) {
+            res.status(401).json({ error: 'Unauthorized' });
+            return;
+        }
+
+        const schedules = await getScheduleConfigs(user.id);
+        if (!schedules[0]) {
+            res.status(404).json({ error: 'No schedule found' });
+            return;
+        }
+
+        const currentSchedule = schedules[0];
+        const updatedSchedule = await saveScheduleConfig(user.id, {
+            enabled: !currentSchedule.enabled,
+            time: currentSchedule.time,
+            timezone: currentSchedule.timezone,
+            source: currentSchedule.source,
+            count: currentSchedule.count
+        });
+
+        if (!updatedSchedule) {
+            res.status(500).json({ error: 'Failed to toggle schedule' });
+            return;
+        }
+
+        // Actualizar job
+        stopScheduleJob(updatedSchedule.id!, user.id);
+        if (updatedSchedule.enabled) {
+            startScheduleJob(updatedSchedule);
+        }
+
+        res.json({
+            status: 'success',
+            message: `Schedule ${updatedSchedule.enabled ? 'enabled' : 'disabled'}`,
+            schedule: updatedSchedule
+        });
+    } catch (error) {
+        console.error('Error toggling schedule:', error);
+        res.status(500).json({ error: 'Failed to toggle schedule' });
+    }
+});
+
+/**
+ * GET - Obtener historial de ejecuciones del schedule
+ */
+router.get('/schedule/executions', requireAuth, async (req: Request, res: Response) => {
+    try {
+        const { data: { user }, error: userError } = await getSupabaseUserClient(
+            (req as any).token
+        ).auth.getUser();
+
+        if (userError || !user) {
+            res.status(401).json({ error: 'Unauthorized' });
+            return;
+        }
+
+        const { data: executions, error } = await supabaseAdmin
+            .from('schedule_executions')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('executed_at', { ascending: false })
+            .limit(50);
+
+        if (error) throw error;
+
+        res.json({
+            status: 'success',
+            executions: executions || []
+        });
+    } catch (error) {
+        console.error('Error getting executions:', error);
+        res.status(500).json({ error: 'Failed to get executions' });
     }
 });
 

@@ -97,3 +97,65 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
+
+-- ============================================
+-- 4. Schedules (Autopilot Configuration)
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS schedules (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  enabled BOOLEAN DEFAULT false,
+  time TEXT NOT NULL,
+  timezone TEXT DEFAULT 'Europe/Madrid',
+  source TEXT NOT NULL CHECK (source IN ('keywords', 'creators')),
+  count INT DEFAULT 3 CHECK (count > 0 AND count <= 20),
+  last_execution TIMESTAMPTZ,
+  next_execution TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id)
+);
+
+-- 5. Schedule Executions (History & Logs)
+CREATE TABLE IF NOT EXISTS schedule_executions (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  schedule_id UUID REFERENCES schedules(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  executed_at TIMESTAMPTZ DEFAULT NOW(),
+  status TEXT NOT NULL CHECK (status IN ('success', 'failed', 'pending')),
+  posts_generated INT DEFAULT 0,
+  error_message TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- RLS Policies for Schedules: Users can only see/edit their own schedule
+ALTER TABLE schedules ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own schedule" ON schedules
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own schedule" ON schedules
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own schedule" ON schedules
+  FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own schedule" ON schedules
+  FOR DELETE USING (auth.uid() = user_id);
+
+-- RLS Policies for Schedule Executions: Users can only see their own executions
+ALTER TABLE schedule_executions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own schedule executions" ON schedule_executions
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own schedule executions" ON schedule_executions
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+-- Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_schedules_user_id ON schedules(user_id);
+CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON schedules(enabled);
+CREATE INDEX IF NOT EXISTS idx_executions_user_id ON schedule_executions(user_id);
+CREATE INDEX IF NOT EXISTS idx_executions_schedule_id ON schedule_executions(schedule_id);
+CREATE INDEX IF NOT EXISTS idx_executions_created ON schedule_executions(created_at);

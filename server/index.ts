@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import routes from './routes';
+import { initializeSchedules } from './services/schedulerService';
 
 dotenv.config();
 
@@ -16,6 +17,11 @@ app.use('/api', routes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
+});
+
+// Initialize schedules when server starts
+initializeSchedules().catch(err => {
+  console.error('Failed to initialize schedules:', err);
 });
 
 // For local development

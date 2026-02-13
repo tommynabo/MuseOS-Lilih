@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Stats, ContentPiece } from '../types';
 import IdeaCard from './IdeaCard';
 import LinkedInPreview from './LinkedInPreview';
@@ -14,6 +14,7 @@ interface DashboardProps {
 }
 
 import { runGenerateWorkflow } from '../services/geminiService';
+import { getScheduleConfig, saveScheduleConfig, toggleSchedule } from '../services/scheduleService';
 
 // ... (existing imports, but keep them if not replacing top of file)
 
@@ -27,6 +28,62 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
     const [schedCount, setSchedCount] = useState(5);
     const [schedSource, setSchedSource] = useState<'keywords' | 'creators'>('creators');
     const [schedActive, setSchedActive] = useState(true);
+    const [isSavingSchedule, setIsSavingSchedule] = useState(false);
+
+    // Drag and drop state
+    const [draggedItem, setDraggedItem] = useState<{ item: ContentPiece; source: string } | null>(null);
+    const [previewPost, setPreviewPost] = useState<ContentPiece | null>(null);
+
+    // Load schedule configuration from backend
+    useEffect(() => {
+        const loadSchedule = async () => {
+            try {
+                const schedule = await getScheduleConfig();
+                if (schedule) {
+                    setSchedTime(schedule.time);
+                    setSchedCount(schedule.count);
+                    setSchedSource(schedule.source);
+                    setSchedActive(schedule.enabled);
+                }
+            } catch (error) {
+                console.error('Error loading schedule:', error);
+            }
+        };
+        loadSchedule();
+    }, []);
+
+    // Auto-save schedule when time changes
+    useEffect(() => {
+        const saveTimer = setTimeout(async () => {
+            if (schedTime && schedCount > 0) {
+                try {
+                    await saveScheduleConfig({
+                        enabled: schedActive,
+                        time: schedTime,
+                        source: schedSource,
+                        count: schedCount
+                    });
+                } catch (error) {
+                    console.error('Error saving schedule:', error);
+                }
+            }
+        }, 1000); // Debounce: save after 1 second of inactivity
+
+        return () => clearTimeout(saveTimer);
+    }, [schedTime, schedCount, schedSource]);
+
+    const handleToggleSchedule = async () => {
+        setIsSavingSchedule(true);
+        try {
+            const result = await toggleSchedule();
+            setSchedActive(result.schedule.enabled);
+        } catch (error) {
+            console.error('Error toggling schedule:', error);
+            alert('Error toggling schedule');
+        } finally {
+            setIsSavingSchedule(false);
+        }
+    };
 
     // Drag and drop state
     const [draggedItem, setDraggedItem] = useState<{ item: ContentPiece; source: string } | null>(null);
@@ -212,7 +269,8 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
                                 </div>
                             </div>
                             <button
-                                onClick={() => setSchedActive(!schedActive)}
+                                onClick={handleToggleSchedule}
+                                disabled={isSavingSchedule}
                                 className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${schedActive ? 'bg-green-500' : 'bg-gray-200'}`}
                             >
                                 <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${schedActive ? 'translate-x-6' : 'translate-x-1'}`} />
