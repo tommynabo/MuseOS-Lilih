@@ -1,6 +1,6 @@
 import { supabase } from "../supabaseClient";
 
-const API_URL = import.meta.env.PROD ? '/api' : 'http://localhost:3001/api';
+const API_URL = import.meta.env.PROD ? '/api' : 'http://localhost:3002/api'; // Lilih uses 3002 (Pablo uses 3001)
 
 const getHeaders = async () => {
   const { data: { session } } = await supabase.auth.getSession();
