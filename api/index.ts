@@ -479,25 +479,67 @@ async function executeWorkflowCore(
         // --- STEP 1: Load user profile ---
         if (!TABLE_PROFILES) throw new Error("TABLE_PROFILES env var missing. Set it in Vercel Environment Variables.");
         
-        // CRITICAL: profiles table uses 'id' = auth.users.id (not 'user_id')
-        // We must filter by id = userId to get the correct profile
-        console.log(`[WORKFLOW] Fetching profile from '${TABLE_PROFILES}' where id = ${userId}`);
-        const { data: profile, error: profileError } = await supabaseClient
+        // Try both 'user_id' (if table has it) and 'id' (if PK = auth user id)
+        // The frontend uses .eq('user_id', userId) so we try that first
+        console.log(`[WORKFLOW] Fetching profile from '${TABLE_PROFILES}' for userId=${userId}`);
+        
+        let profile: any = null;
+        let profileError: any = null;
+
+        // Attempt 1: Try user_id column (matches frontend App.tsx)
+        const attempt1 = await supabaseClient
             .from(TABLE_PROFILES)
             .select('*')
-            .eq('id', userId)
-            .single();
+            .eq('user_id', userId)
+            .maybeSingle();
         
-        if (profileError) {
-            console.error(`[WORKFLOW] Profile fetch error:`, profileError);
-            throw new Error(`Profile fetch error: ${profileError.message}. Code: ${profileError.code}. Hint: ${profileError.hint || 'none'}`);
+        if (attempt1.data) {
+            profile = attempt1.data;
+            console.log(`[WORKFLOW] Profile found via user_id column`);
+        } else {
+            console.log(`[WORKFLOW] user_id query returned: data=${attempt1.data}, error=${attempt1.error?.message || 'none'}`);
+            // Attempt 2: Try id column (schema.sql says id = auth.users.id)
+            const attempt2 = await supabaseClient
+                .from(TABLE_PROFILES)
+                .select('*')
+                .eq('id', userId)
+                .maybeSingle();
+            
+            if (attempt2.data) {
+                profile = attempt2.data;
+                console.log(`[WORKFLOW] Profile found via id column`);
+            } else {
+                console.log(`[WORKFLOW] id query returned: data=${attempt2.data}, error=${attempt2.error?.message || 'none'}`);
+                // Attempt 3: Last resort - get any profile (single-user setup)
+                const attempt3 = await supabaseClient
+                    .from(TABLE_PROFILES)
+                    .select('*')
+                    .limit(1)
+                    .maybeSingle();
+                
+                if (attempt3.data) {
+                    profile = attempt3.data;
+                    console.log(`[WORKFLOW] Profile found via fallback (first row). WARNING: Multi-user may be broken.`);
+                } else {
+                    profileError = attempt3.error;
+                    console.error(`[WORKFLOW] All profile queries failed. Last error:`, attempt3.error);
+                }
+            }
         }
-        if (!profile) throw new Error("No profile found for this user. Go to Settings and save your profile first.");
+        
+        if (!profile) {
+            const errMsg = profileError 
+                ? `Profile fetch error: ${profileError.message}. Code: ${profileError.code}. Hint: ${profileError.hint || 'none'}`
+                : "No profile found for this user. Go to Settings and save your profile first.";
+            throw new Error(errMsg);
+        }
 
+        console.log(`[WORKFLOW] Profile loaded OK. Keys: ${Object.keys(profile).join(', ')}`);
+        
         const keywords = profile.niche_keywords || [];
         const customInstructions = profile.custom_instructions || '';
 
-        console.log(`[WORKFLOW] Profile loaded: keywords=${JSON.stringify(keywords)}, instructions=${customInstructions?.substring(0, 50)}...`);
+        console.log(`[WORKFLOW] Profile data: keywords=${JSON.stringify(keywords)}, instructions=${customInstructions?.substring(0, 50)}...`);
 
         // --- STEP 2: Build search queries or creator URLs ---
         let searchQueries: string[] = [];
