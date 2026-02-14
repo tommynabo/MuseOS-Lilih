@@ -1009,44 +1009,28 @@ app.get('/api/cron', async (req: Request, res: Response) => {
 
         console.log(`[CRON] Found ${schedules.length} enabled schedule(s)`);
 
-        // 2. Check which schedules should run now
+        // 2. Execute all enabled schedules (Hobby plan: cron runs once daily at 08:00 UTC)
+        // Since we only get one shot per day, we run ALL enabled schedules regardless of their configured time.
         const now = new Date();
         const executionResults: any[] = [];
 
         for (const schedule of schedules) {
             const { user_id, time, timezone, source, count, id: scheduleId } = schedule;
             
-            // Convert current time to the schedule's timezone
-            const tz = timezone || 'Europe/Madrid';
-            const nowInTz = new Date(now.toLocaleString('en-US', { timeZone: tz }));
-            const currentHour = nowInTz.getHours().toString().padStart(2, '0');
-            const currentMinute = nowInTz.getMinutes().toString().padStart(2, '0');
-            const currentTime = `${currentHour}:${currentMinute}`;
+            console.log(`[CRON] Schedule ${scheduleId}: user=${user_id}, source=${source}, count=${count}, configured_time=${time} (${timezone || 'Europe/Madrid'})`);
 
-            // Parse scheduled time
-            const [schedHour] = time.split(':');
-            const schedTimeHour = `${schedHour}:00`;
-            const currentTimeHour = `${currentHour}:00`;
-
-            console.log(`[CRON] Schedule ${scheduleId}: scheduled=${time} (${tz}), current=${currentTime}, comparing hours: ${schedTimeHour} vs ${currentTimeHour}`);
-
-            // Match by hour (cron runs every hour, so we match the hour)
-            if (schedTimeHour !== currentTimeHour) {
-                console.log(`[CRON] Schedule ${scheduleId}: Not time yet. Skipping.`);
-                continue;
-            }
-
-            // 3. Check if already executed this hour (prevent duplicate runs)
-            const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+            // Check if already executed today (prevent duplicate runs)
+            const todayStart = new Date(now);
+            todayStart.setHours(0, 0, 0, 0);
             const { data: recentExecs } = await supabaseAdmin
                 .from('schedule_executions')
                 .select('id')
                 .eq('schedule_id', scheduleId)
-                .gte('executed_at', oneHourAgo.toISOString())
+                .gte('executed_at', todayStart.toISOString())
                 .limit(1);
 
             if (recentExecs && recentExecs.length > 0) {
-                console.log(`[CRON] Schedule ${scheduleId}: Already executed this hour. Skipping.`);
+                console.log(`[CRON] Schedule ${scheduleId}: Already executed today. Skipping.`);
                 continue;
             }
 
