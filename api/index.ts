@@ -448,23 +448,30 @@ router.post('/rewrite', requireAuth, async (req, res) => {
     } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-// ===== WORKFLOW LOGIC (EXTRACTED) =====
-async function executeWorkflowGenerate(req: Request, res: Response) {
-    req.setTimeout(60000); // 60s timeout
-    const { source, count = 1 } = req.body;
-    const supabase = getUserSupabase(req);
-    const { data: { user } } = await supabase.auth.getUser();
+// ===== CORE WORKFLOW LOGIC (shared by HTTP endpoints and cron) =====
+interface WorkflowResult {
+    status: 'success' | 'error';
+    data?: any[];
+    message: string;
+    postsProcessed?: number;
+    error?: string;
+}
 
-    if (!user) return res.status(401).json({ error: "Unauthorized" });
-
-    const MAX_ROUNDS = 2;        // Max 2 rounds to stay within Vercel 60s timeout
-    const BUFFER_MULTIPLIER = 2; // Fetch 2× more than needed from Apify
-    const targetCount = Math.min(Number(count) || 1, 10); // Cap at 10
+async function executeWorkflowCore(
+    supabaseClient: ReturnType<typeof createClient>,
+    userId: string,
+    source: 'keywords' | 'creators',
+    count: number
+): Promise<WorkflowResult> {
+    const MAX_ROUNDS = 2;
+    const BUFFER_MULTIPLIER = 2;
+    const targetCount = Math.min(Number(count) || 1, 10);
 
     try {
-        if (!TABLE_PROFILES) throw new Error("TABLE_PROFILES env var missing.");
-        const { data: profile } = await supabase.from(TABLE_PROFILES).select('*').single();
-        if (!profile) return res.status(400).json({ error: "Config needed." });
+        if (!TABLE_PROFILES) throw new Error("TABLE_PROFILES env var missing. Set it in Vercel Environment Variables.");
+        const { data: profile, error: profileError } = await supabaseClient.from(TABLE_PROFILES).select('*').single();
+        if (profileError) throw new Error(`Profile fetch error: ${profileError.message}`);
+        if (!profile) throw new Error("No profile found. Go to Settings and save your profile first.");
 
         const keywords = profile.niche_keywords || [];
         const customInstructions = profile.custom_instructions || '';
@@ -476,7 +483,7 @@ async function executeWorkflowGenerate(req: Request, res: Response) {
         let creatorUrls: string[] = [];
 
         if (source === 'keywords') {
-            if (keywords.length === 0) return res.status(400).json({ error: "No keywords." });
+            if (keywords.length === 0) throw new Error("No keywords configured. Go to Settings and add niche keywords.");
             const activeKeywords = keywords.slice(0, 3); // Use top 3 keywords
             console.log('[WORKFLOW] Active keywords:', activeKeywords);
             const expandedLists = await Promise.all(activeKeywords.map((k: string) => expandSearchQuery(k)));
@@ -485,14 +492,14 @@ async function executeWorkflowGenerate(req: Request, res: Response) {
             searchQueries = rawQueries.filter(q => typeof q === 'string' && q.trim().length > 0).slice(0, 3); // Max 3 queries to avoid Vercel timeout
             console.log('[WORKFLOW] Final search queries:', searchQueries);
         } else {
-            if (!TABLE_CREATORS) throw new Error("TABLE_CREATORS env var missing.");
-            const { data: creators } = await supabase.from(TABLE_CREATORS).select('linkedin_url');
-            if (!creators?.length) return res.status(400).json({ error: "No creators." });
+            if (!TABLE_CREATORS) throw new Error("TABLE_CREATORS env var missing. Set it in Vercel Environment Variables.");
+            const { data: creators } = await supabaseClient.from(TABLE_CREATORS).select('linkedin_url');
+            if (!creators?.length) throw new Error("No creators found. Go to Settings and add creator LinkedIn URLs.");
             creatorUrls = creators
                 .map((c: any) => c.linkedin_url)
                 .filter((u: any) => typeof u === 'string' && u.trim().length > 0)
                 .slice(0, 5);
-            if (creatorUrls.length === 0) return res.status(400).json({ error: "No valid creator URLs." });
+            if (creatorUrls.length === 0) throw new Error("No valid creator URLs found. Check your creators have valid LinkedIn profile URLs.");
         }
 
         // ===== SMART BUFFER LOOP =====
@@ -580,8 +587,8 @@ async function executeWorkflowGenerate(req: Request, res: Response) {
 
                 const postUrl = post.url || post.postUrl || '';
                 if (!TABLE_POSTS) throw new Error("TABLE_POSTS env var missing.");
-                const insertResult = await supabase.from(TABLE_POSTS).insert({
-                    user_id: user.id,
+                const insertResult = await supabaseClient.from(TABLE_POSTS).insert({
+                    user_id: userId,
                     original_content: postText,
                     generated_content: rewritten,
                     type: source === 'keywords' ? 'research' : 'parasite',
@@ -632,17 +639,38 @@ async function executeWorkflowGenerate(req: Request, res: Response) {
         }
 
         console.log(`[WORKFLOW] Done! ${savedResults.length}/${targetCount} posts generated`);
-        res.json({
-            status: 'success',
+        return {
+            status: 'success' as const,
             data: savedResults,
             message: `${savedResults.length} posts generated`,
             postsProcessed: savedResults.length
-        });
+        };
 
     } catch (error: any) {
         console.error("[WORKFLOW] FATAL ERROR:", error);
-        res.status(500).json({ error: error.message });
+        return {
+            status: 'error' as const,
+            message: error.message,
+            error: error.message
+        };
     }
+}
+
+// HTTP wrapper for the workflow (used by frontend)
+async function executeWorkflowGenerate(req: Request, res: Response) {
+    req.setTimeout(60000); // 60s timeout
+    const { source, count = 1 } = req.body;
+    const supabase = getUserSupabase(req);
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) return res.status(401).json({ error: "Unauthorized" });
+
+    const result = await executeWorkflowCore(supabase, user.id, source, count);
+
+    if (result.status === 'error') {
+        return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
 }
 
 router.post('/workflow/generate', requireAuth, executeWorkflowGenerate);
@@ -837,6 +865,168 @@ router.get('/schedule/executions', requireAuth, async (req: any, res) => {
 // Mount router on both /api and / to handle Vercel path variations
 app.use('/api', router);
 app.use('/', router);
+
+// ===== VERCEL CRON ENDPOINT (outside router to avoid /api/api/cron) =====
+const CRON_SECRET = process.env.CRON_SECRET;
+
+app.get('/api/cron', async (req: Request, res: Response) => {
+    console.log('[CRON] ========== Cron job triggered ==========');
+    
+    // Security: verify the request comes from Vercel Cron
+    const authHeader = req.headers.authorization;
+    if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {
+        console.error('[CRON] Unauthorized cron request');
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    if (!supabaseAdmin) {
+        console.error('[CRON] Supabase admin client not available');
+        return res.status(500).json({ error: 'Supabase not configured' });
+    }
+
+    try {
+        // 1. Fetch all enabled schedules
+        const { data: schedules, error: schedError } = await supabaseAdmin
+            .from('schedules')
+            .select('*')
+            .eq('enabled', true);
+
+        if (schedError) throw schedError;
+        if (!schedules || schedules.length === 0) {
+            console.log('[CRON] No enabled schedules found. Nothing to do.');
+            return res.json({ status: 'ok', message: 'No enabled schedules', executed: 0 });
+        }
+
+        console.log(`[CRON] Found ${schedules.length} enabled schedule(s)`);
+
+        // 2. Check which schedules should run now
+        const now = new Date();
+        const executionResults: any[] = [];
+
+        for (const schedule of schedules) {
+            const { user_id, time, timezone, source, count, id: scheduleId } = schedule;
+            
+            // Convert current time to the schedule's timezone
+            const tz = timezone || 'Europe/Madrid';
+            const nowInTz = new Date(now.toLocaleString('en-US', { timeZone: tz }));
+            const currentHour = nowInTz.getHours().toString().padStart(2, '0');
+            const currentMinute = nowInTz.getMinutes().toString().padStart(2, '0');
+            const currentTime = `${currentHour}:${currentMinute}`;
+
+            // Parse scheduled time
+            const [schedHour] = time.split(':');
+            const schedTimeHour = `${schedHour}:00`;
+            const currentTimeHour = `${currentHour}:00`;
+
+            console.log(`[CRON] Schedule ${scheduleId}: scheduled=${time} (${tz}), current=${currentTime}, comparing hours: ${schedTimeHour} vs ${currentTimeHour}`);
+
+            // Match by hour (cron runs every hour, so we match the hour)
+            if (schedTimeHour !== currentTimeHour) {
+                console.log(`[CRON] Schedule ${scheduleId}: Not time yet. Skipping.`);
+                continue;
+            }
+
+            // 3. Check if already executed this hour (prevent duplicate runs)
+            const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+            const { data: recentExecs } = await supabaseAdmin
+                .from('schedule_executions')
+                .select('id')
+                .eq('schedule_id', scheduleId)
+                .gte('executed_at', oneHourAgo.toISOString())
+                .limit(1);
+
+            if (recentExecs && recentExecs.length > 0) {
+                console.log(`[CRON] Schedule ${scheduleId}: Already executed this hour. Skipping.`);
+                continue;
+            }
+
+            console.log(`[CRON] Schedule ${scheduleId}: EXECUTING for user ${user_id}, source=${source}, count=${count}`);
+
+            // 4. Create execution record (pending)
+            const { data: execution, error: execInsertError } = await supabaseAdmin
+                .from('schedule_executions')
+                .insert({
+                    schedule_id: scheduleId,
+                    user_id: user_id,
+                    executed_at: now.toISOString(),
+                    status: 'pending',
+                    posts_generated: 0
+                })
+                .select()
+                .single();
+
+            if (execInsertError) {
+                console.error(`[CRON] Failed to create execution record:`, execInsertError);
+                continue;
+            }
+
+            // 5. Execute workflow using admin client (no user auth needed for cron)
+            try {
+                const result = await executeWorkflowCore(
+                    supabaseAdmin,
+                    user_id,
+                    source,
+                    count
+                );
+
+                // 6. Update execution record
+                const postsGenerated = result.postsProcessed || 0;
+                await supabaseAdmin
+                    .from('schedule_executions')
+                    .update({
+                        status: result.status === 'success' ? 'success' : 'failed',
+                        posts_generated: postsGenerated,
+                        error_message: result.status === 'error' ? result.error : null
+                    })
+                    .eq('id', execution.id);
+
+                // 7. Update last_execution on the schedule
+                await supabaseAdmin
+                    .from('schedules')
+                    .update({ last_execution: now.toISOString() })
+                    .eq('id', scheduleId);
+
+                console.log(`[CRON] Schedule ${scheduleId}: ${result.status} - ${postsGenerated} posts generated`);
+                executionResults.push({
+                    scheduleId,
+                    userId: user_id,
+                    status: result.status,
+                    postsGenerated,
+                    message: result.message
+                });
+
+            } catch (workflowError: any) {
+                console.error(`[CRON] Schedule ${scheduleId}: Workflow error:`, workflowError);
+                await supabaseAdmin
+                    .from('schedule_executions')
+                    .update({
+                        status: 'failed',
+                        posts_generated: 0,
+                        error_message: workflowError.message
+                    })
+                    .eq('id', execution.id);
+
+                executionResults.push({
+                    scheduleId,
+                    userId: user_id,
+                    status: 'failed',
+                    error: workflowError.message
+                });
+            }
+        }
+
+        console.log(`[CRON] ========== Cron complete. ${executionResults.length} schedule(s) executed ==========`);
+        return res.json({
+            status: 'ok',
+            executed: executionResults.length,
+            results: executionResults
+        });
+
+    } catch (error: any) {
+        console.error('[CRON] Fatal error:', error);
+        return res.status(500).json({ error: error.message });
+    }
+});
 
 // ===== VERCEL HANDLER =====
 export default app;
