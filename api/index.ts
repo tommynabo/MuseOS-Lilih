@@ -977,53 +977,17 @@ app.use('/api', router);
 app.use('/', router);
 
 // ===== VERCEL CRON / AUTOPILOT ENDPOINT =====
-// Called by Vercel Cron every hour. Checks which schedules are "due" based on
-// the user's configured time + timezone, then runs the generation pipeline.
-// Manual test: GET /api/cron?run_all=true
+// Vercel Hobby plan: cron runs ONCE daily (07:00 UTC = ~08:00 Madrid).
+// Since we only get one shot, we execute ALL enabled schedules regardless of configured time.
+// Manual test: GET /api/cron?run_all=true  (skips auth check)
 
 const CRON_SECRET = process.env.CRON_SECRET;
-
-/**
- * Helper: get current hour (HH) in a given IANA timezone.
- * Returns e.g. "14" for 2pm in Europe/Madrid.
- */
-function getCurrentHourInTimezone(tz: string): string {
-    try {
-        const formatter = new Intl.DateTimeFormat('en-GB', {
-            timeZone: tz,
-            hour: '2-digit',
-            hour12: false
-        });
-        return formatter.format(new Date()); // e.g. "14"
-    } catch {
-        // Fallback to Europe/Madrid if invalid tz
-        const formatter = new Intl.DateTimeFormat('en-GB', {
-            timeZone: 'Europe/Madrid',
-            hour: '2-digit',
-            hour12: false
-        });
-        return formatter.format(new Date());
-    }
-}
-
-/**
- * Helper: get today's date string (YYYY-MM-DD) in a given timezone.
- */
-function getTodayInTimezone(tz: string): string {
-    try {
-        const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz }); // en-CA gives YYYY-MM-DD
-        return formatter.format(new Date());
-    } catch {
-        const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' });
-        return formatter.format(new Date());
-    }
-}
 
 app.get('/api/cron', async (req: Request, res: Response) => {
     console.log('[CRON-LILIH] ========== Cron triggered ==========');
     const runAll = req.query.run_all === 'true';
 
-    // Security: in production, verify Vercel Cron header. Skip if ?run_all=true (manual test)
+    // Security: in production verify Vercel cron headers. Skip if ?run_all=true (manual test)
     if (!runAll) {
         const authHeader = req.headers.authorization;
         const cronHeader = req.headers['x-vercel-cron'];
@@ -1032,7 +996,7 @@ app.get('/api/cron', async (req: Request, res: Response) => {
             return res.status(401).json({ error: 'Unauthorized' });
         }
     } else {
-        console.log('[CRON-LILIH] Manual test mode (run_all=true) — skipping auth & time check');
+        console.log('[CRON-LILIH] Manual test mode (run_all=true) — skipping auth');
     }
 
     if (!supabaseAdmin) {
@@ -1061,28 +1025,22 @@ app.get('/api/cron', async (req: Request, res: Response) => {
         for (const schedule of schedules) {
             const { user_id, time, timezone, source, count, id: scheduleId, last_execution } = schedule;
             const tz = timezone || 'Europe/Madrid';
-            const configuredHour = time ? time.split(':')[0] : null; // e.g. "09" from "09:00"
-            const currentHour = getCurrentHourInTimezone(tz);
 
-            console.log(`[CRON-LILIH] Schedule ${scheduleId}: user=${user_id}, configured=${time} (${tz}), currentHour=${currentHour}, source=${source}, count=${count}`);
+            console.log(`[CRON-LILIH] Schedule ${scheduleId}: user=${user_id}, source=${source}, count=${count}, time=${time} (${tz})`);
 
-            // 2. Check if this schedule is "due" right now
-            //    Skip if the hour doesn't match, UNLESS run_all=true (manual test)
-            if (!runAll && configuredHour !== currentHour) {
-                console.log(`[CRON-LILIH] Schedule ${scheduleId}: Not due (configured hour ${configuredHour} ≠ current ${currentHour}). Skipping.`);
-                continue;
-            }
-
-            // 3. Check if already executed today in user's timezone (prevent duplicates)
-            const todayStr = getTodayInTimezone(tz); // e.g. "2026-02-14"
+            // 2. Check if already executed today (prevent duplicates)
+            //    Compare dates in user's timezone
             if (!runAll && last_execution) {
-                const lastExecDate = new Date(last_execution);
-                // Format last_execution in user's timezone to compare dates
+                let todayStr: string;
                 let lastExecDay: string;
                 try {
-                    lastExecDay = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(lastExecDate);
+                    const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz });
+                    todayStr = fmt.format(now);
+                    lastExecDay = fmt.format(new Date(last_execution));
                 } catch {
-                    lastExecDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(lastExecDate);
+                    const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' });
+                    todayStr = fmt.format(now);
+                    lastExecDay = fmt.format(new Date(last_execution));
                 }
                 if (lastExecDay === todayStr) {
                     console.log(`[CRON-LILIH] Schedule ${scheduleId}: Already executed today (${lastExecDay}). Skipping.`);
@@ -1090,23 +1048,9 @@ app.get('/api/cron', async (req: Request, res: Response) => {
                 }
             }
 
-            // Also check schedule_executions table as backup
-            const todayStart = `${todayStr}T00:00:00.000Z`;
-            const { data: recentExecs } = await supabaseAdmin
-                .from('schedule_executions')
-                .select('id')
-                .eq('schedule_id', scheduleId)
-                .gte('executed_at', todayStart)
-                .limit(1);
+            console.log(`[CRON-LILIH] Schedule ${scheduleId}: ✅ EXECUTING for user ${user_id}`);
 
-            if (!runAll && recentExecs && recentExecs.length > 0) {
-                console.log(`[CRON-LILIH] Schedule ${scheduleId}: Execution record found for today. Skipping.`);
-                continue;
-            }
-
-            console.log(`[CRON-LILIH] Schedule ${scheduleId}: ✅ DUE — executing now for user ${user_id}`);
-
-            // 4. Create execution record (pending)
+            // 3. Create execution record (pending)
             const { data: execution, error: execInsertError } = await supabaseAdmin
                 .from('schedule_executions')
                 .insert({
@@ -1124,7 +1068,7 @@ app.get('/api/cron', async (req: Request, res: Response) => {
                 continue;
             }
 
-            // 5. Execute the same generation pipeline used by manual generator
+            // 4. Execute the generation pipeline
             try {
                 const result = await executeWorkflowCore(
                     supabaseAdmin,
@@ -1135,7 +1079,7 @@ app.get('/api/cron', async (req: Request, res: Response) => {
 
                 const postsGenerated = result.postsProcessed || 0;
 
-                // 6. Update execution record
+                // 5. Update execution record
                 await supabaseAdmin
                     .from('schedule_executions')
                     .update({
@@ -1145,7 +1089,7 @@ app.get('/api/cron', async (req: Request, res: Response) => {
                     })
                     .eq('id', execution.id);
 
-                // 7. Update last_execution on the schedule
+                // 6. Update last_execution on the schedule
                 await supabaseAdmin
                     .from('schedules')
                     .update({ last_execution: now.toISOString() })
