@@ -29,6 +29,8 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
     const [schedSource, setSchedSource] = useState<'keywords' | 'creators'>('creators');
     const [schedActive, setSchedActive] = useState(true);
     const [isSavingSchedule, setIsSavingSchedule] = useState(false);
+    const [isAutopilotGenerating, setIsAutopilotGenerating] = useState(false);
+    const [autopilotResult, setAutopilotResult] = useState<string | null>(null);
 
     // Time picker state
     const [showTimePicker, setShowTimePicker] = useState(false);
@@ -81,12 +83,61 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
         setIsSavingSchedule(true);
         try {
             const result = await toggleSchedule();
-            setSchedActive(result.schedule.enabled);
+            const newEnabled = result.schedule.enabled;
+            setSchedActive(newEnabled);
+            setIsSavingSchedule(false);
+
+            // When toggling ON, trigger immediate generation
+            if (newEnabled) {
+                setIsAutopilotGenerating(true);
+                setAutopilotResult(null);
+                try {
+                    const source = result.schedule.source || schedSource;
+                    const count = result.schedule.count || schedCount;
+                    const genResult = await runGenerateWorkflow(source, count);
+                    if (genResult.error) {
+                        console.error('Autopilot generation error:', genResult.error);
+                        setAutopilotResult(`Error: ${genResult.error}`);
+                    } else {
+                        const postsCount = genResult.postsProcessed || 0;
+                        setAutopilotResult(`✓ ${postsCount} posts generados`);
+                        if (onRefresh) onRefresh();
+                        setTimeout(() => setAutopilotResult(null), 5000);
+                    }
+                } catch (e: any) {
+                    console.error('Auto-generation failed:', e);
+                    setAutopilotResult('Error al generar');
+                } finally {
+                    setIsAutopilotGenerating(false);
+                }
+            }
         } catch (error) {
             console.error('Error toggling schedule:', error);
             alert('Error toggling schedule');
-        } finally {
             setIsSavingSchedule(false);
+        }
+    };
+
+    const handleRunAutopilotNow = async () => {
+        if (isAutopilotGenerating) return;
+        setIsAutopilotGenerating(true);
+        setAutopilotResult(null);
+        try {
+            const genResult = await runGenerateWorkflow(schedSource, schedCount);
+            if (genResult.error) {
+                console.error('Autopilot manual run error:', genResult.error);
+                setAutopilotResult(`Error: ${genResult.error}`);
+            } else {
+                const postsCount = genResult.postsProcessed || 0;
+                setAutopilotResult(`✓ ${postsCount} posts generados`);
+                if (onRefresh) onRefresh();
+                setTimeout(() => setAutopilotResult(null), 5000);
+            }
+        } catch (e: any) {
+            console.error('Autopilot manual run failed:', e);
+            setAutopilotResult('Error al generar');
+        } finally {
+            setIsAutopilotGenerating(false);
         }
     };
 
@@ -424,6 +475,41 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
                                 </div>
                             </div>
                         </div>
+
+                        {/* Ejecutar Ahora Button */}
+                        {schedActive && (
+                            <button
+                                onClick={handleRunAutopilotNow}
+                                disabled={isAutopilotGenerating}
+                                className={`w-full mt-4 py-3 font-bold rounded-xl transition-all flex items-center justify-center gap-2 text-sm ${
+                                    isAutopilotGenerating
+                                        ? 'bg-green-100 text-green-600 cursor-not-allowed'
+                                        : 'bg-green-600 text-white hover:bg-green-700 hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0'
+                                }`}
+                            >
+                                {isAutopilotGenerating ? (
+                                    <>
+                                        <div className="w-4 h-4 border-2 border-green-400/30 border-t-green-600 rounded-full animate-spin"></div>
+                                        Generando con piloto...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Zap size={16} /> Ejecutar Ahora
+                                    </>
+                                )}
+                            </button>
+                        )}
+
+                        {/* Autopilot Result Message */}
+                        {autopilotResult && (
+                            <div className={`mt-3 text-center text-xs font-bold py-2 px-3 rounded-lg ${
+                                autopilotResult.startsWith('✓')
+                                    ? 'bg-green-50 text-green-600 border border-green-200'
+                                    : 'bg-red-50 text-red-600 border border-red-200'
+                            }`}>
+                                {autopilotResult}
+                            </div>
+                        )}
                     </div>
 
                     {/* RIGHT: System Status */}

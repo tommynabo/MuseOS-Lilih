@@ -462,7 +462,7 @@ interface WorkflowResult {
 }
 
 async function executeWorkflowCore(
-    supabaseClient: ReturnType<typeof createClient>,
+    supabaseClient: any,
     userId: string,
     source: 'keywords' | 'creators',
     count: number
