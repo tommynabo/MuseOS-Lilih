@@ -125,32 +125,36 @@ function filterSensitiveData(text: string): string {
 
 // ===== APIFY FUNCTIONS =====
 async function searchLinkedInPosts(keywords: string[], maxPosts = 5): Promise<ApifyPost[]> {
-    if (!apifyClient) { console.error("Apify token missing"); return []; }
+    if (!apifyClient) { console.error("[APIFY] Token missing - APIFY_API_TOKEN not set"); return []; }
     try {
+        console.log(`[APIFY] Searching LinkedIn posts. Keywords: ${JSON.stringify(keywords)}, maxPosts: ${maxPosts}`);
         const run = await apifyClient.actor("buIWk2uOUzTmcLsuB").call({
             maxPosts, maxReactions: 0, scrapeComments: false, scrapeReactions: false,
             searchQueries: keywords, sortBy: "relevance"
         });
         const { items } = await apifyClient.dataset(run.defaultDatasetId).listItems();
+        console.log(`[APIFY] Search returned ${items.length} posts`);
         return items as ApifyPost[];
-    } catch (error) {
-        console.error("Apify Search Error:", error);
+    } catch (error: any) {
+        console.error("[APIFY] Search Error:", error.message || error);
         return [];
     }
 }
 
 async function getCreatorPosts(profileUrls: string[], maxPosts = 3): Promise<ApifyPost[]> {
-    if (!apifyClient) { console.error("Apify token missing"); return []; }
+    if (!apifyClient) { console.error("[APIFY] Token missing - APIFY_API_TOKEN not set"); return []; }
     try {
+        console.log(`[APIFY] Fetching creator posts. URLs: ${JSON.stringify(profileUrls)}, maxPosts: ${maxPosts}`);
         const run = await apifyClient.actor("A3cAPGpwBEG8RJwse").call({
             includeQuotePosts: true, includeReposts: true, maxComments: 5, maxPosts,
             maxReactions: 1, postedLimit: "week", scrapeComments: true, scrapeReactions: true,
             targetUrls: profileUrls
         });
         const { items } = await apifyClient.dataset(run.defaultDatasetId).listItems();
+        console.log(`[APIFY] Creator posts returned ${items.length} posts`);
         return items as ApifyPost[];
-    } catch (error) {
-        console.error("Apify Creator Posts Error:", error);
+    } catch (error: any) {
+        console.error("[APIFY] Creator Posts Error:", error.message || error);
         return [];
     }
 }
@@ -467,38 +471,78 @@ async function executeWorkflowCore(
     const BUFFER_MULTIPLIER = 2;
     const targetCount = Math.min(Number(count) || 1, 10);
 
+    console.log(`[WORKFLOW] ====== START ====== userId=${userId}, source=${source}, count=${targetCount}`);
+    console.log(`[WORKFLOW] ENV CHECK: TABLE_PROFILES=${TABLE_PROFILES}, TABLE_POSTS=${TABLE_POSTS}, TABLE_CREATORS=${TABLE_CREATORS}`);
+    console.log(`[WORKFLOW] ENV CHECK: OPENAI=${!!openai}, APIFY=${!!apifyClient}, SUPABASE_ADMIN=${!!supabaseAdmin}`);
+
     try {
+        // --- STEP 1: Load user profile ---
         if (!TABLE_PROFILES) throw new Error("TABLE_PROFILES env var missing. Set it in Vercel Environment Variables.");
-        const { data: profile, error: profileError } = await supabaseClient.from(TABLE_PROFILES).select('*').single();
-        if (profileError) throw new Error(`Profile fetch error: ${profileError.message}`);
-        if (!profile) throw new Error("No profile found. Go to Settings and save your profile first.");
+        
+        // CRITICAL: profiles table uses 'id' = auth.users.id (not 'user_id')
+        // We must filter by id = userId to get the correct profile
+        console.log(`[WORKFLOW] Fetching profile from '${TABLE_PROFILES}' where id = ${userId}`);
+        const { data: profile, error: profileError } = await supabaseClient
+            .from(TABLE_PROFILES)
+            .select('*')
+            .eq('id', userId)
+            .single();
+        
+        if (profileError) {
+            console.error(`[WORKFLOW] Profile fetch error:`, profileError);
+            throw new Error(`Profile fetch error: ${profileError.message}. Code: ${profileError.code}. Hint: ${profileError.hint || 'none'}`);
+        }
+        if (!profile) throw new Error("No profile found for this user. Go to Settings and save your profile first.");
 
         const keywords = profile.niche_keywords || [];
         const customInstructions = profile.custom_instructions || '';
 
-        console.log('[WORKFLOW] Starting. Source:', source, 'Target:', targetCount, 'Keywords:', keywords);
+        console.log(`[WORKFLOW] Profile loaded: keywords=${JSON.stringify(keywords)}, instructions=${customInstructions?.substring(0, 50)}...`);
 
-        // Prepare search queries (only once, reused across rounds)
+        // --- STEP 2: Build search queries or creator URLs ---
         let searchQueries: string[] = [];
         let creatorUrls: string[] = [];
 
         if (source === 'keywords') {
             if (keywords.length === 0) throw new Error("No keywords configured. Go to Settings and add niche keywords.");
-            const activeKeywords = keywords.slice(0, 3); // Use top 3 keywords
+            const activeKeywords = keywords.slice(0, 3);
             console.log('[WORKFLOW] Active keywords:', activeKeywords);
-            const expandedLists = await Promise.all(activeKeywords.map((k: string) => expandSearchQuery(k)));
-            console.log('[WORKFLOW] Expanded queries:', expandedLists);
-            const rawQueries = [...new Set([...activeKeywords, ...expandedLists.flat()])];
-            searchQueries = rawQueries.filter(q => typeof q === 'string' && q.trim().length > 0).slice(0, 3); // Max 3 queries to avoid Vercel timeout
+            
+            if (!openai) {
+                console.warn('[WORKFLOW] OpenAI not configured, using keywords as-is without expansion');
+                searchQueries = activeKeywords;
+            } else {
+                const expandedLists = await Promise.all(activeKeywords.map((k: string) => expandSearchQuery(k)));
+                console.log('[WORKFLOW] Expanded queries:', expandedLists);
+                const rawQueries = [...new Set([...activeKeywords, ...expandedLists.flat()])];
+                searchQueries = rawQueries.filter(q => typeof q === 'string' && q.trim().length > 0).slice(0, 3);
+            }
             console.log('[WORKFLOW] Final search queries:', searchQueries);
+            if (searchQueries.length === 0) {
+                searchQueries = keywords.slice(0, 3); // Fallback to raw keywords
+                console.log('[WORKFLOW] Fallback to raw keywords:', searchQueries);
+            }
         } else {
             if (!TABLE_CREATORS) throw new Error("TABLE_CREATORS env var missing. Set it in Vercel Environment Variables.");
-            const { data: creators } = await supabaseClient.from(TABLE_CREATORS).select('linkedin_url');
+            
+            // CRITICAL: Filter creators by user_id to respect multi-tenancy
+            console.log(`[WORKFLOW] Fetching creators from '${TABLE_CREATORS}' where user_id = ${userId}`);
+            const { data: creators, error: creatorsError } = await supabaseClient
+                .from(TABLE_CREATORS)
+                .select('linkedin_url')
+                .eq('user_id', userId);
+            
+            if (creatorsError) {
+                console.error('[WORKFLOW] Creators fetch error:', creatorsError);
+                throw new Error(`Creators fetch error: ${creatorsError.message}`);
+            }
             if (!creators?.length) throw new Error("No creators found. Go to Settings and add creator LinkedIn URLs.");
+            
             creatorUrls = creators
                 .map((c: any) => c.linkedin_url)
                 .filter((u: any) => typeof u === 'string' && u.trim().length > 0)
                 .slice(0, 5);
+            console.log('[WORKFLOW] Creator URLs:', creatorUrls);
             if (creatorUrls.length === 0) throw new Error("No valid creator URLs found. Check your creators have valid LinkedIn profile URLs.");
         }
 
@@ -638,7 +682,7 @@ async function executeWorkflowCore(
             }
         }
 
-        console.log(`[WORKFLOW] Done! ${savedResults.length}/${targetCount} posts generated`);
+        console.log(`[WORKFLOW] ====== DONE! ${savedResults.length}/${targetCount} posts generated ======`);
         return {
             status: 'success' as const,
             data: savedResults,
@@ -647,7 +691,8 @@ async function executeWorkflowCore(
         };
 
     } catch (error: any) {
-        console.error("[WORKFLOW] FATAL ERROR:", error);
+        console.error("[WORKFLOW] ====== FATAL ERROR ======", error.message);
+        console.error("[WORKFLOW] Stack:", error.stack);
         return {
             status: 'error' as const,
             message: error.message,
@@ -660,16 +705,39 @@ async function executeWorkflowCore(
 async function executeWorkflowGenerate(req: Request, res: Response) {
     req.setTimeout(60000); // 60s timeout
     const { source, count = 1 } = req.body;
-    const supabase = getUserSupabase(req);
-    const { data: { user } } = await supabase.auth.getUser();
+    
+    console.log(`[WORKFLOW-HTTP] Received request: source=${source}, count=${count}`);
+    
+    if (!source || !['keywords', 'creators'].includes(source)) {
+        return res.status(400).json({ error: `Invalid source: '${source}'. Must be 'keywords' or 'creators'.` });
+    }
 
-    if (!user) return res.status(401).json({ error: "Unauthorized" });
+    // Use supabaseAdmin for all DB operations to bypass RLS issues
+    // The user auth is only used to verify identity
+    const userSupabase = getUserSupabase(req);
+    const { data: { user }, error: authError } = await userSupabase.auth.getUser();
 
-    const result = await executeWorkflowCore(supabase, user.id, source, count);
+    if (authError || !user) {
+        console.error('[WORKFLOW-HTTP] Auth error:', authError?.message || 'No user');
+        return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    console.log(`[WORKFLOW-HTTP] Authenticated user: ${user.id}`);
+
+    // IMPORTANT: Use supabaseAdmin to bypass RLS. The cron also uses supabaseAdmin.
+    // This ensures consistent behavior between manual and autopilot generation.
+    if (!supabaseAdmin) {
+        return res.status(500).json({ error: 'Server DB client not configured' });
+    }
+
+    const result = await executeWorkflowCore(supabaseAdmin, user.id, source, count);
 
     if (result.status === 'error') {
+        console.error(`[WORKFLOW-HTTP] Error result:`, result.error);
         return res.status(400).json({ error: result.error });
     }
+    
+    console.log(`[WORKFLOW-HTTP] Success: ${result.postsProcessed} posts generated`);
     return res.json(result);
 }
 
