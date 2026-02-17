@@ -7,9 +7,9 @@ import { getScheduleConfigs, saveScheduleConfig, startScheduleJob, stopScheduleJ
 const router = express.Router();
 
 // ===== TABLES =====
-const TABLE_PROFILES = process.env.TABLE_PROFILES;
-const TABLE_POSTS = process.env.TABLE_POSTS;
-const TABLE_CREATORS = process.env.TABLE_CREATORS;
+const TABLE_PROFILES = process.env.TABLE_PROFILES || '';
+const TABLE_POSTS = process.env.TABLE_POSTS || '';
+const TABLE_CREATORS = process.env.TABLE_CREATORS || '';
 
 if (!TABLE_PROFILES || !TABLE_POSTS || !TABLE_CREATORS) {
     console.error(`[FATAL] TABLE_VARS_MISSING_SERVER: PROF=${TABLE_PROFILES}, POST=${TABLE_POSTS}, CREAT=${TABLE_CREATORS}`);
