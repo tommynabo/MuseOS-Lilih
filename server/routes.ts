@@ -1,7 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { supabaseAdmin, getSupabaseUserClient } from './db';
 import { getCreatorPosts, searchLinkedInPosts, searchGoogleNews } from './services/apifyService';
-import { generatePostOutline, regeneratePost, generateIdeasFromResearch, evaluatePostEngagement, expandSearchQuery, extractPostStructure } from './services/openaiService';
+import { generatePostOutline, regeneratePost, generateIdeasFromResearch, evaluatePostEngagement, expandSearchQuery, extractPostStructure, buildUserPreferencesContext } from './services/openaiService';
 import { getScheduleConfigs, saveScheduleConfig, startScheduleJob, stopScheduleJob } from './services/schedulerService';
 
 const router = express.Router();
@@ -348,26 +348,66 @@ router.get('/posts', requireAuth, async (req, res) => {
 });
 
 /**
- * UPDATE STATUS
+ * UPDATE STATUS OR FEEDBACK
  */
 router.patch('/posts/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
-    const { status } = req.body;
+    const { status, feedback, meta } = req.body;
     const supabase = getUserSupabase(req);
 
-    if (!['idea', 'drafted', 'approved', 'posted'].includes(status)) {
+    // Validate status if provided
+    if (status && !['idea', 'drafted', 'approved', 'posted'].includes(status)) {
         res.status(400).json({ error: "Invalid status" });
         return;
     }
 
-    const { data, error } = await supabase.from(TABLE_POSTS)
-        .update({ status })
-        .eq('id', id)
-        .select()
-        .single();
+    // Validate feedback if provided
+    if (feedback && !['like', 'dislike'].includes(feedback)) {
+        res.status(400).json({ error: "Invalid feedback" });
+        return;
+    }
 
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
+    try {
+        // Get current post to merge meta properly
+        const { data: currentPost, error: fetchError } = await supabase
+            .from(TABLE_POSTS)
+            .select('meta')
+            .eq('id', id)
+            .single();
+
+        if (fetchError) return res.status(500).json({ error: fetchError.message });
+        if (!currentPost) return res.status(404).json({ error: "Post not found" });
+
+        // Merge meta data (don't overwrite)
+        const currentMeta = currentPost.meta || {};
+        const updatedMeta = { ...currentMeta, ...meta };
+
+        // Add feedback if provided
+        if (feedback) {
+            updatedMeta.feedback = feedback;
+        }
+
+        // Build update object
+        const updateData: any = {};
+        if (status) updateData.status = status;
+        if (meta || feedback) updateData.meta = updatedMeta;
+
+        // If nothing to update, return current post
+        if (Object.keys(updateData).length === 0) {
+            return res.json(currentPost);
+        }
+
+        const { data, error } = await supabase.from(TABLE_POSTS)
+            .update(updateData)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) return res.status(500).json({ error: error.message });
+        res.json(data);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message || "Update failed" });
+    }
 });
 
 /**
@@ -409,6 +449,20 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
         const keywords = profile.niche_keywords || [];
         const customInstructions = profile.custom_instructions || '';
 
+        // BUILD PREFERENCES CONTEXT (The Brain)
+        // Fetch last 100 posts to extract user preferences
+        const { data: userPosts } = await supabase
+            .from(TABLE_POSTS)
+            .select('original_content, generated_content, meta')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(100);
+
+        const preferencesContext = await buildUserPreferencesContext(userPosts || []);
+        if (preferencesContext) {
+            console.log(`[PREFERENCES] Built user preferences context from ${(userPosts || []).length} posts`);
+        }
+
         let allPosts: ApifyPost[] = [];
 
         console.log(`[WORKFLOW] Starting generation for ${count} posts...`);
@@ -428,7 +482,7 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
                 if (keyword.includes('"') || keyword.includes('AND')) {
                     expandedQueries.push(keyword);
                 } else {
-                    const expansion = await expandSearchQuery(keyword);
+                    const expansion = await expandSearchQuery(keyword, preferencesContext);
                     expandedQueries = [...expandedQueries, ...expansion];
                 }
             }
@@ -473,7 +527,7 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
 
         // Step 2: RELATIVE VIRALITY SCORING (The Sniffer)
         // This function now uses the Improved Logic (Ratios)
-        const highEngagementPosts = await evaluatePostEngagement(uniquePosts);
+        const highEngagementPosts = await evaluatePostEngagement(uniquePosts, preferencesContext);
         console.log(`AI selected ${highEngagementPosts.length} high-engagement posts (Hidden Gems)`);
 
         if (highEngagementPosts.length === 0) {
@@ -506,7 +560,7 @@ router.post('/workflow/generate', requireAuth, async (req, res) => {
             const structureJson = await extractPostStructure(filteredContent);
 
             // 4. THE WRITER: Fill the structure
-            const rewritten = await regeneratePost(structureJson || '', filteredContent, customInstructions);
+            const rewritten = await regeneratePost(structureJson || '', filteredContent, customInstructions, preferencesContext);
 
             // Save to DB
             const { error: insertError } = await supabase.from(TABLE_POSTS).insert({

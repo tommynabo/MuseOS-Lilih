@@ -31,6 +31,7 @@ export interface ContentPiece {
   originalText?: string; // The "Source Material"
   originalAuthor?: string;
   viralMetrics?: ViralMetrics;
+  feedback?: 'like' | 'dislike'; // Feedback loop for AI training
 
   generatedDraft: GeneratedDraft;
   aiAnalysis?: {

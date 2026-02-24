@@ -16,6 +16,16 @@ const ContentManager: React.FC<ContentManagerProps> = ({ ideas, onSelectIdea, on
   const drafts = ideas.filter(i => i.status === 'drafted');
   const ready = ideas.filter(i => i.status === 'approved' || i.status === 'posted');
 
+  // Handle feedback (like/dislike)
+  const handleFeedback = (ideaId: string, feedback: 'like' | 'dislike') => {
+    // Call API to save feedback
+    fetch(`/api/posts/${ideaId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ feedback })
+    }).catch(err => console.error('Error sending feedback:', err));
+  };
+
   const SectionHeader = ({ icon: Icon, title, count, colorClass, iconColorClass }: any) => (
     <div className="flex items-center justify-between mb-6">
       <div className="flex items-center gap-3">
@@ -97,7 +107,7 @@ const ContentManager: React.FC<ContentManagerProps> = ({ ideas, onSelectIdea, on
                 draggable
                 onDragStart={() => handleDragStart(item, 'idea')}
               >
-                <IdeaCard item={item} onClick={onSelectIdea} onDelete={onDeletePost} />
+                <IdeaCard item={item} onClick={onSelectIdea} onDelete={onDeletePost} onFeedback={(feedback) => handleFeedback(item.id, feedback)} />
               </div>
             ))}
             {newIdeas.length === 0 && <EmptyState text="Sin nuevas ideas" />}

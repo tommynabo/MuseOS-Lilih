@@ -7,12 +7,52 @@ const openai = new OpenAI({
 });
 
 /**
- * 1. QUERY EXPANSION: Transform simple keywords into intent-based search queries
+ * BUILD USER PREFERENCES CONTEXT (The Brain)
+ * Constructs a preference context from user's liked and disliked posts
+ * to guide future content generation.
  */
-export const expandSearchQuery = async (topic: string): Promise<string[]> => {
+export const buildUserPreferencesContext = async (userPosts: any[]): Promise<string> => {
+    if (!userPosts || userPosts.length === 0) {
+        return '';
+    }
+
+    const likedPosts = userPosts.filter((p: any) => p.meta?.feedback === 'like');
+    const dislikedPosts = userPosts.filter((p: any) => p.meta?.feedback === 'dislike');
+
+    if (likedPosts.length === 0 && dislikedPosts.length === 0) {
+        return '';
+    }
+
+    // Build context strings
+    const likedSummary = likedPosts
+        .slice(0, 10)
+        .map((p: any) => (p.original_content || p.generated_content || '').substring(0, 150))
+        .filter(Boolean)
+        .join(' | ');
+
+    const dislikedSummary = dislikedPosts
+        .slice(0, 10)
+        .map((p: any) => (p.original_content || p.generated_content || '').substring(0, 150))
+        .filter(Boolean)
+        .join(' | ');
+
+    let contextStr = '';
+    if (likedSummary) {
+        contextStr += `LE GUSTA:\n${likedSummary}\n\n`;
+    }
+    if (dislikedSummary) {
+        contextStr += `NO LE GUSTA:\n${dislikedSummary}\n\n`;
+    }
+
+    return contextStr ? `CONTEXTO DE PREFERENCIAS DEL USUARIO:\n${contextStr}` : '';
+};
+
+export const expandSearchQuery = async (topic: string, preferencesContext: string = ''): Promise<string[]> => {
     const prompt = `
     Actúa como un experto en búsqueda avanzada de LinkedIn.
     Transforma el tema "${topic}" en 3 búsquedas booleanas específicas para encontrar contenido de ALTO VALOR (no genérico).
+    
+    ${preferencesContext ? `${preferencesContext}\nUSA ESTE CONTEXTO PARA BIASEAR LAS BÚSQUEDAS HACIA TEMAS QUE AL USUARIO LE GUSTAN.` : ''}
     
     Genera 3 variaciones:
     1. "Historia/Aprendizaje": "${topic}" AND ("error" OR "aprendí" OR "lección" OR "historia")
@@ -49,7 +89,7 @@ export const expandSearchQuery = async (topic: string): Promise<string[]> => {
  * 2. RELATIVE VIRALITY SCORING (The Sniffer)
  * Finds "Hidden Gems" by analyzing engagement ratios, not just raw volume.
  */
-export const evaluatePostEngagement = async (posts: any[]): Promise<any[]> => {
+export const evaluatePostEngagement = async (posts: any[], preferencesContext: string = ''): Promise<any[]> => {
     if (posts.length === 0) return [];
 
     // Pre-calculate metrics for the AI to make it easier
@@ -81,6 +121,8 @@ export const evaluatePostEngagement = async (posts: any[]): Promise<any[]> => {
     Busca posts que tengan:
     1. ALTO DEBATE: Ratio comentarios/likes alto (> 0.1). Indica que el tema tocó una fibra.
     2. ALTA UTILIDAD: Ratio shares/likes alto. Indica que la gente lo guarda.
+    
+    ${preferencesContext ? `${preferencesContext}\nPRISMA: Penaliza severamente posts que no se alinean con lo que NO LE GUSTA al usuario. Favorece posts relacionados a lo que LE GUSTA.` : ''}
     
     DATA:
     ${JSON.stringify(postsData, null, 2)}
@@ -170,10 +212,12 @@ export const extractPostStructure = async (originalContent: string) => {
 /**
  * 4. THE WRITER: Fill the structure with new content
  */
-export const regeneratePost = async (structureJson: string, originalContent: string, customInstructions: string) => {
-    const systemPrompt = customInstructions || `
+export const regeneratePost = async (structureJson: string, originalContent: string, customInstructions: string, preferencesContext: string = '') => {
+    const systemPrompt = `${customInstructions || `
     Eres un redactor experto en Ghostwriting para LinkedIn.
     Tu objetivo es escribir contenido nuevo que se sienta tuyo, pero usando una estructura probada.
+    `}
+    ${preferencesContext ? `\n${preferencesContext}\nIMPORTANTE: Ten en cuenta estas preferencias al escribir. Penaliza severamente temas que NO LE GUSTAN.` : ''}
     `;
 
     const prompt = `

@@ -24,6 +24,16 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
     const [manualSource, setManualSource] = useState<'keywords' | 'creators'>('keywords');
     const [isGenerating, setIsGenerating] = useState(false);
 
+    // Handle feedback (like/dislike)
+    const handleFeedback = (ideaId: string, feedback: 'like' | 'dislike') => {
+        // Call API to save feedback
+        fetch(`/api/posts/${ideaId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ feedback })
+        }).catch(err => console.error('Error sending feedback:', err));
+    };
+
     const [schedTime, setSchedTime] = useState('09:00');
     const [schedCount, setSchedCount] = useState(5);
     const [schedSource, setSchedSource] = useState<'keywords' | 'creators'>('creators');
@@ -609,7 +619,7 @@ const Dashboard: React.FC<DashboardProps> = ({ stats, ideas, onSelectIdea, onRef
                                 onDragStart={() => handleDragStart(item, 'idea')}
                                 className="cursor-move hover:opacity-75 transition-opacity"
                             >
-                                <IdeaCard item={item} onClick={onSelectIdea} onDelete={onDeletePost} />
+                                <IdeaCard item={item} onClick={onSelectIdea} onDelete={onDeletePost} onFeedback={(feedback) => handleFeedback(item.id, feedback)} />
                             </div>
                         ))}
                         {newIdeas.length === 0 && <EmptyState text="Sin nuevas ideas" />}

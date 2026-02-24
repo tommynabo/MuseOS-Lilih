@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowRight, Sparkles, Quote, Trash2, Zap, AlertCircle, Target, Brain, TrendingUp, Heart, MessageCircle } from 'lucide-react';
+import { ArrowRight, Sparkles, Quote, Trash2, Zap, AlertCircle, Target, Brain, TrendingUp, Heart, MessageCircle, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { ContentPiece } from '../types';
 import LinkedInPostLink from './LinkedInPostLink';
 
@@ -7,6 +7,7 @@ interface IdeaCardProps {
   item: ContentPiece;
   onClick: (item: ContentPiece) => void;
   onDelete?: (id: string) => void;
+  onFeedback?: (feedback: 'like' | 'dislike') => void;
 }
 
 // Virality score color gradient
@@ -26,7 +27,7 @@ function getEmotionEmoji(emotion?: string): string {
   return map[(emotion || '').toLowerCase()] || '💡';
 }
 
-const IdeaCard: React.FC<IdeaCardProps> = ({ item, onClick, onDelete }) => {
+const IdeaCard: React.FC<IdeaCardProps> = ({ item, onClick, onDelete, onFeedback }) => {
   const analysis = item.aiAnalysis;
   const viralityScore = analysis?.virality_score?.overall;
 
@@ -183,6 +184,42 @@ const IdeaCard: React.FC<IdeaCardProps> = ({ item, onClick, onDelete }) => {
           </div>
         )}
       </div>
+
+      {/* Feedback Buttons (Like/Dislike) - Only for ideas */}
+      {item.status === 'idea' && onFeedback && (
+        <div className="flex gap-2 mt-4 pt-4 border-t border-gray-100">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onFeedback('like');
+            }}
+            className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg font-medium text-sm transition-all ${
+              item.feedback === 'like'
+                ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
+                : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200'
+            }`}
+            title="Me gusta esta idea"
+          >
+            <ThumbsUp size={16} />
+            <span>Me gusta</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onFeedback('dislike');
+            }}
+            className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg font-medium text-sm transition-all ${
+              item.feedback === 'dislike'
+                ? 'bg-red-100 text-red-700 border border-red-300'
+                : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200'
+            }`}
+            title="No me gusta esta idea"
+          >
+            <ThumbsDown size={16} />
+            <span>No me gusta</span>
+          </button>
+        </div>
+      )}
 
       {onDelete && (
         <button
